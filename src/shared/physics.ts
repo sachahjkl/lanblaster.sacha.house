@@ -12,11 +12,98 @@ import {
   PLAYER_RADIUS,
   PLAYER_SPEED,
   Vec3,
+  getWeapon,
   WEAPONS,
   movingPlatformPosition,
 } from "./protocol.ts";
 import { JUMP_PADS, LADDERS, LEVEL, MOVING_PLATFORMS, SPAWN_POINTS } from "./mapData.ts";
 import { SETTINGS } from "./settings.ts";
+
+const LEVEL_BOUNDS = LEVEL.reduce(
+  (bounds, box) => ({
+    min: {
+      x: Math.min(bounds.min.x, box.min.x),
+      y: Math.min(bounds.min.y, box.min.y),
+      z: Math.min(bounds.min.z, box.min.z),
+    },
+    max: {
+      x: Math.max(bounds.max.x, box.max.x),
+      y: Math.max(bounds.max.y, box.max.y),
+      z: Math.max(bounds.max.z, box.max.z),
+    },
+  }),
+  {
+    min: { x: Infinity, y: Infinity, z: Infinity },
+    max: { x: -Infinity, y: -Infinity, z: -Infinity },
+  },
+);
+
+const LEVEL_COLLIDER_MARGIN = 1.5;
+const LEVEL_WALL_HEIGHT = 24;
+const FALL_OUT_Y = LEVEL_BOUNDS.min.y - 8;
+const LEVEL_GUARD_COLLIDERS = [
+  {
+    min: {
+      x: LEVEL_BOUNDS.min.x - LEVEL_COLLIDER_MARGIN,
+      y: LEVEL_BOUNDS.min.y - 1,
+      z: LEVEL_BOUNDS.min.z - LEVEL_COLLIDER_MARGIN,
+    },
+    max: {
+      x: LEVEL_BOUNDS.max.x + LEVEL_COLLIDER_MARGIN,
+      y: LEVEL_BOUNDS.min.y,
+      z: LEVEL_BOUNDS.max.z + LEVEL_COLLIDER_MARGIN,
+    },
+  },
+  {
+    min: {
+      x: LEVEL_BOUNDS.min.x - LEVEL_COLLIDER_MARGIN,
+      y: LEVEL_BOUNDS.min.y,
+      z: LEVEL_BOUNDS.min.z - LEVEL_COLLIDER_MARGIN,
+    },
+    max: {
+      x: LEVEL_BOUNDS.min.x,
+      y: LEVEL_BOUNDS.max.y + LEVEL_WALL_HEIGHT,
+      z: LEVEL_BOUNDS.max.z + LEVEL_COLLIDER_MARGIN,
+    },
+  },
+  {
+    min: {
+      x: LEVEL_BOUNDS.max.x,
+      y: LEVEL_BOUNDS.min.y,
+      z: LEVEL_BOUNDS.min.z - LEVEL_COLLIDER_MARGIN,
+    },
+    max: {
+      x: LEVEL_BOUNDS.max.x + LEVEL_COLLIDER_MARGIN,
+      y: LEVEL_BOUNDS.max.y + LEVEL_WALL_HEIGHT,
+      z: LEVEL_BOUNDS.max.z + LEVEL_COLLIDER_MARGIN,
+    },
+  },
+  {
+    min: {
+      x: LEVEL_BOUNDS.min.x,
+      y: LEVEL_BOUNDS.min.y,
+      z: LEVEL_BOUNDS.min.z - LEVEL_COLLIDER_MARGIN,
+    },
+    max: {
+      x: LEVEL_BOUNDS.max.x,
+      y: LEVEL_BOUNDS.max.y + LEVEL_WALL_HEIGHT,
+      z: LEVEL_BOUNDS.min.z,
+    },
+  },
+  {
+    min: {
+      x: LEVEL_BOUNDS.min.x,
+      y: LEVEL_BOUNDS.min.y,
+      z: LEVEL_BOUNDS.max.z,
+    },
+    max: {
+      x: LEVEL_BOUNDS.max.x,
+      y: LEVEL_BOUNDS.max.y + LEVEL_WALL_HEIGHT,
+      z: LEVEL_BOUNDS.max.z + LEVEL_COLLIDER_MARGIN,
+    },
+  },
+] as const;
+const LEVEL_COLLIDERS = [...LEVEL, ...LEVEL_GUARD_COLLIDERS];
 
 export function createPlayer(id: string, spawnIndex = 0): PlayerState {
   const spawn = SPAWN_POINTS[spawnIndex % SPAWN_POINTS.length];
@@ -140,25 +227,34 @@ export function muzzlePosition(p: PlayerState, spread = 0): Vec3 {
   const cy = Math.cos(p.yaw);
   const sy = Math.sin(p.yaw);
   const yawForward = { x: sy, z: -cy };
-  const yawRight = { x: cy, z: sy };
+  const yawRight = normalize({ x: cy, y: 0, z: sy });
   const dir = lookDirection(p);
-  const weapon = SETTINGS.weaponVisuals;
+  const weapon = getWeapon(p.weaponId);
+  const weaponVisuals = SETTINGS.weaponVisuals;
+  const muzzleOffset = weapon.muzzleOffset ?? { x: 0, y: 0.028, z: -0.195 };
+  const up = normalize(cross(yawRight, dir));
 
   const center = {
-    x: p.pos.x + yawForward.x * weapon.forwardHandOffset + yawRight.x * weapon.rightHandOffset,
-    y: p.pos.y + weapon.handHeight,
-    z: p.pos.z + yawForward.z * weapon.forwardHandOffset + yawRight.z * weapon.rightHandOffset,
+    x:
+      p.pos.x +
+      yawForward.x * weaponVisuals.forwardHandOffset +
+      yawRight.x * weaponVisuals.rightHandOffset,
+    y: p.pos.y + weaponVisuals.handHeight,
+    z:
+      p.pos.z +
+      yawForward.z * weaponVisuals.forwardHandOffset +
+      yawRight.z * weaponVisuals.rightHandOffset,
   };
   if (p.aiming) {
-    center.x = p.pos.x + yawForward.x * (weapon.forwardHandOffset + 0.04);
-    center.y = p.pos.y + weapon.handHeight + 0.1;
-    center.z = p.pos.z + yawForward.z * (weapon.forwardHandOffset + 0.04);
+    center.x = p.pos.x + yawForward.x * (weaponVisuals.forwardHandOffset + 0.04);
+    center.y = p.pos.y + weaponVisuals.handHeight + 0.1;
+    center.z = p.pos.z + yawForward.z * (weaponVisuals.forwardHandOffset + 0.04);
   }
 
   const pos = {
-    x: center.x + dir.x * weapon.muzzleForwardOffset,
-    y: center.y + weapon.muzzleUpOffset + dir.y * weapon.muzzleForwardOffset,
-    z: center.z + dir.z * weapon.muzzleForwardOffset,
+    x: center.x + yawRight.x * muzzleOffset.x + up.x * muzzleOffset.y - dir.x * muzzleOffset.z,
+    y: center.y + up.y * muzzleOffset.y - dir.y * muzzleOffset.z,
+    z: center.z + yawRight.z * muzzleOffset.x + up.z * muzzleOffset.y - dir.z * muzzleOffset.z,
   };
   if (spread <= 0) return pos;
   const jitter = spread * 0.03;
@@ -228,7 +324,7 @@ function rayIntersectAABB(origin: Vec3, dir: Vec3, box: { min: Vec3; max: Vec3 }
 
 export function raycastLevel(origin: Vec3, dir: Vec3, maxDist: number): number | null {
   let best: number | null = null;
-  for (const box of LEVEL) {
+  for (const box of LEVEL_COLLIDERS) {
     const t = rayIntersectAABB(origin, dir, box);
     if (t !== null && t <= maxDist && (best === null || t < best)) {
       best = t;
@@ -387,12 +483,11 @@ export function stepPlayer(p: PlayerState, dt: number): void {
   clampToLadder(p);
   applyJumpPads(p);
 
-  // Simple floor / ceiling clamp if outside world
-  if (p.pos.y < -20) {
-    p.pos.y = 10;
+  if (p.pos.y < FALL_OUT_Y) {
+    p.pos.y = SPAWN_POINTS[0].y;
     p.vel.y = 0;
-    p.pos.x = 0;
-    p.pos.z = 0;
+    p.pos.x = SPAWN_POINTS[0].x;
+    p.pos.z = SPAWN_POINTS[0].z;
   }
 }
 
@@ -449,7 +544,7 @@ function tryStepUp(p: PlayerState, wasGrounded: boolean): boolean {
   p.pos.y += maxStep;
   const steppedBox = playerAABB(p);
 
-  for (const box of LEVEL) {
+  for (const box of LEVEL_COLLIDERS) {
     if (intersectAABB(steppedBox, box)) {
       p.pos.y = originalY;
       return false;
@@ -464,11 +559,11 @@ function tryStepUp(p: PlayerState, wasGrounded: boolean): boolean {
 function resolveAxis(p: PlayerState, axis: "x" | "y" | "z", wasGrounded: boolean): void {
   if (axis !== "y") {
     const playerBox = playerAABB(p);
-    const hits = LEVEL.filter((box) => intersectAABB(playerBox, box));
+    const hits = LEVEL_COLLIDERS.filter((box) => intersectAABB(playerBox, box));
     if (hits.length > 0 && tryStepUp(p, wasGrounded)) return;
   }
 
-  for (const box of LEVEL) {
+  for (const box of LEVEL_COLLIDERS) {
     const playerBox = playerAABB(p);
     if (!intersectAABB(playerBox, box)) continue;
 

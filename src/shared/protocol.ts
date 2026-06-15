@@ -22,6 +22,7 @@ export interface Vec3 {
 export interface WeaponConfig {
   id: string;
   name: string;
+  muzzleOffset?: Vec3;
   damage: number;
   cooldownMs: number;
   maxAmmo: number;
@@ -39,6 +40,7 @@ export const WEAPONS: WeaponConfig[] = [
   {
     id: "pistol",
     name: "Pistol",
+    muzzleOffset: { x: 0, y: 0.028, z: -0.195 },
     damage: 25,
     cooldownMs: 300,
     maxAmmo: 12,
@@ -52,6 +54,7 @@ export const WEAPONS: WeaponConfig[] = [
   {
     id: "rifle",
     name: "Rifle",
+    muzzleOffset: { x: 0, y: 0.05, z: -0.22 },
     damage: 18,
     cooldownMs: 100,
     maxAmmo: 30,
@@ -65,6 +68,7 @@ export const WEAPONS: WeaponConfig[] = [
   {
     id: "sniper",
     name: "Sniper",
+    muzzleOffset: { x: 0, y: 0.052, z: -0.164 },
     damage: 80,
     cooldownMs: 1200,
     maxAmmo: 5,
@@ -77,6 +81,7 @@ export const WEAPONS: WeaponConfig[] = [
   {
     id: "shotgun",
     name: "Shotgun",
+    muzzleOffset: { x: 0, y: 0.031, z: -0.245 },
     damage: 11,
     cooldownMs: 950,
     maxAmmo: 8,

@@ -9,7 +9,7 @@
     "typescript": "npm:typescript@5.3.3"
   },
   "tasks": {
-    "build": "deno run --allow-net --allow-read --allow-write --allow-env build.ts",
+    "build": "deno run --allow-run --allow-net --allow-read --allow-write --allow-env build.ts",
     "dev": "deno task build && deno task start",
     "fmt": "oxfmt src build.ts scripts deno.json",
     "fmt:check": "oxfmt --check src build.ts scripts deno.json",

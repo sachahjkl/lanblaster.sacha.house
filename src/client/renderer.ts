@@ -1,16 +1,8 @@
 import * as THREE from "three";
 import { GLTF, GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { PickupState, PlayerState, Vec3, movingPlatformPosition } from "../shared/protocol.ts";
-import {
-  DECORATIONS,
-  JUMP_PADS,
-  LADDERS,
-  LEVEL,
-  MAP_SCALE,
-  MOVING_PLATFORMS,
-} from "../shared/mapData.ts";
+import { DECORATIONS, JUMP_PADS, LADDERS, LEVEL, MOVING_PLATFORMS } from "../shared/mapData.ts";
 import { SETTINGS } from "../shared/settings.ts";
 
 const OVERHEAD_UI = {
@@ -133,7 +125,7 @@ export class GameRenderer {
 
     this.scene.fog = new THREE.Fog(0x87ceeb, 120, 360);
 
-    // Visual level is loaded from the OBJ; physics uses LEVEL directly.
+    this.buildArenaVisualMap();
     this.addJumpPadVisuals();
     this.addMovingPlatformVisuals();
     this.addLadderVisuals();
@@ -151,7 +143,6 @@ export class GameRenderer {
       this.loadSkybox(),
       this.loadEnvironmentTextures(),
       this.loadAssets(),
-      this.loadObjMap(),
     ]).then(() => undefined);
   }
 
@@ -256,40 +247,6 @@ export class GameRenderer {
     return new THREE.MeshStandardMaterial({ map: texture, roughness: 0.9 });
   }
 
-  createNoiseTexture(size = 256): THREE.CanvasTexture {
-    const canvas = document.createElement("canvas");
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext("2d")!;
-    ctx.fillStyle = "#808080";
-    ctx.fillRect(0, 0, size, size);
-    const img = ctx.getImageData(0, 0, size, size);
-    for (let i = 0; i < img.data.length; i += 4) {
-      const v = 128 + (Math.random() - 0.5) * 64;
-      img.data[i] = v;
-      img.data[i + 1] = v;
-      img.data[i + 2] = v;
-      img.data[i + 3] = 255;
-    }
-    ctx.putImageData(img, 0, 0);
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.wrapS = THREE.RepeatWrapping;
-    texture.wrapT = THREE.RepeatWrapping;
-    texture.repeat.set(4, 4);
-    return texture;
-  }
-
-  addVisualGround() {
-    const ground = new THREE.Mesh(new THREE.BoxGeometry(512, 0.2, 512), this.floorMaterial);
-    ground.receiveShadow = true;
-    ground.position.set(0, -0.12, 0);
-    const map = this.floorMaterial.map;
-    if (map) {
-      map.repeat.set(48, 48);
-    }
-    this.scene.add(ground);
-  }
-
   addColliderVisuals() {
     const materials = new Map<number, THREE.MeshStandardMaterial>();
     const getMaterial = (color: number) => {
@@ -304,9 +261,6 @@ export class GameRenderer {
     };
 
     for (const box of LEVEL) {
-      // Ground is rendered as the big tan floor already.
-      if (box.min.y < 0 && box.max.y <= 0) continue;
-
       const sx = box.max.x - box.min.x;
       const sy = box.max.y - box.min.y;
       const sz = box.max.z - box.min.z;
@@ -322,6 +276,11 @@ export class GameRenderer {
       mesh.receiveShadow = true;
       this.visualMapGroup.add(mesh);
     }
+  }
+
+  buildArenaVisualMap() {
+    this.scene.add(this.visualMapGroup);
+    this.addColliderVisuals();
   }
 
   async loadAssets() {
@@ -388,38 +347,6 @@ export class GameRenderer {
       this.firstPersonWeaponId = null;
     } catch (err) {
       console.warn("Asset loading failed, using primitive fallback", err);
-    }
-  }
-
-  async loadObjMap() {
-    try {
-      const loader = new OBJLoader();
-      const group = await new Promise<THREE.Group>((resolve, reject) => {
-        loader.load("/assets/online/afps-level/level.obj", resolve, undefined, reject);
-      });
-      const mapTexture = this.createNoiseTexture();
-      const mapMaterial = new THREE.MeshStandardMaterial({
-        color: 0x8899aa,
-        map: mapTexture,
-        roughness: 0.85,
-        metalness: 0.05,
-        side: THREE.DoubleSide,
-      });
-      group.traverse((child: THREE.Object3D) => {
-        const mesh = child as THREE.Mesh;
-        if (!mesh.isMesh) return;
-        mesh.material = mapMaterial;
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-      });
-      group.scale.setScalar(MAP_SCALE);
-      this.visualMapGroup.add(group);
-      this.addVisualGround();
-      this.scene.add(this.visualMapGroup);
-    } catch (err) {
-      console.warn("Map OBJ loading failed, using generated fallback", err);
-      this.addVisualGround();
-      this.buildDustLikeVisualMap();
     }
   }
 
@@ -497,54 +424,6 @@ export class GameRenderer {
       rig.head.rotation.y += -headDelta * 0.75;
       rig.head.rotation.x += pitch * 0.55;
     }
-  }
-
-  buildDustLikeVisualMap() {
-    this.scene.add(this.visualMapGroup);
-    this.addColliderVisuals();
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0xb98f5b, roughness: 0.85 });
-    const accentMatA = new THREE.MeshStandardMaterial({ color: 0xc97b63, roughness: 0.8 });
-    const accentMatB = new THREE.MeshStandardMaterial({ color: 0x6b8c42, roughness: 0.8 });
-    const accentMatC = new THREE.MeshStandardMaterial({ color: 0x5c8cb8, roughness: 0.8 });
-    const routeMat = new THREE.MeshStandardMaterial({
-      color: 0xfacc15,
-      roughness: 0.45,
-      emissive: 0x3f2f05,
-    });
-
-    const box = (
-      x: number,
-      y: number,
-      z: number,
-      sx: number,
-      sy: number,
-      sz: number,
-      mat: THREE.Material,
-    ) => {
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat);
-      mesh.position.set(x, y + sy / 2, z);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      this.visualMapGroup.add(mesh);
-    };
-
-    // Lane color strips.
-    box(0, 0.01, -24, 80, 0.05, 9, accentMatA);
-    box(0, 0.015, 0, 76, 0.05, 7, accentMatB);
-    box(0, 0.02, 24, 80, 0.05, 9, accentMatC);
-
-    // Gold route markers show intended pushes and traversal loops.
-    box(-20, 0.07, -24, 28, 0.05, 1.2, routeMat);
-    box(20, 0.07, 24, 28, 0.05, 1.2, routeMat);
-    box(-31.5, 0.09, 14.5, 25, 0.05, 0.8, routeMat);
-    box(31.5, 0.09, -14.5, 25, 0.05, 0.8, routeMat);
-
-    // Visual-only accents that do not collide.
-    box(0, 0.02, 0, 4, 0.08, 4, wallMat);
-
-    const tunnelMat = this.wallMaterial;
-    box(-31.5, 0.02, 14.5, 27, 0.08, 5, tunnelMat);
-    box(31.5, 0.02, -14.5, 27, 0.08, 5, tunnelMat);
   }
 
   addJumpPadVisuals() {
@@ -719,14 +598,16 @@ export class GameRenderer {
 
   addLoadedProps() {
     const placements = [
-      { key: "banner", pos: new THREE.Vector3(-10, 0, -34), scale: 2.2, yaw: 0.2 },
-      { key: "banner", pos: new THREE.Vector3(10, 0, 34), scale: 2.2, yaw: Math.PI + 0.2 },
-      { key: "scifi-crate", pos: new THREE.Vector3(-26, 0, -18), scale: 1.8, yaw: 0.35 },
-      { key: "scifi-crate", pos: new THREE.Vector3(26, 0, 18), scale: 1.8, yaw: -0.35 },
-      { key: "column", pos: new THREE.Vector3(-14, 0, 10), scale: 2.0, yaw: 0 },
-      { key: "column", pos: new THREE.Vector3(14, 0, -10), scale: 2.0, yaw: 0 },
-      { key: "tree", pos: new THREE.Vector3(-42, 0, 28), scale: 2.6, yaw: -0.4 },
-      { key: "tree", pos: new THREE.Vector3(42, 0, -28), scale: 2.6, yaw: 0.4 },
+      { key: "banner", pos: new THREE.Vector3(-25.5, 0, 0), scale: 2.1, yaw: Math.PI * 0.5 },
+      { key: "banner", pos: new THREE.Vector3(25.5, 0, 0), scale: 2.1, yaw: -Math.PI * 0.5 },
+      { key: "banner", pos: new THREE.Vector3(0, 0, -25.5), scale: 2.1, yaw: 0 },
+      { key: "banner", pos: new THREE.Vector3(0, 0, 25.5), scale: 2.1, yaw: Math.PI },
+      { key: "scifi-crate", pos: new THREE.Vector3(-18, 0, -18), scale: 1.7, yaw: 0.35 },
+      { key: "scifi-crate", pos: new THREE.Vector3(18, 0, 18), scale: 1.7, yaw: -0.35 },
+      { key: "column", pos: new THREE.Vector3(-18, 4.5, -6), scale: 1.9, yaw: 0 },
+      { key: "column", pos: new THREE.Vector3(18, 4.5, 6), scale: 1.9, yaw: 0 },
+      { key: "statue", pos: new THREE.Vector3(-22.5, 0, 22.5), scale: 2.0, yaw: Math.PI * 0.25 },
+      { key: "statue", pos: new THREE.Vector3(22.5, 0, -22.5), scale: 2.0, yaw: -Math.PI * 0.25 },
     ];
 
     for (const placement of placements) {
