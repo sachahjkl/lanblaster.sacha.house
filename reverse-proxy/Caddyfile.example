@@ -1,0 +1,10 @@
+# Usage:
+#   $env:GAME_HOSTNAME="your-pc-hostname.local"
+#   $env:GAME_PORT="8000"
+#   caddy run --config reverse-proxy/Caddyfile.example
+#
+# Then colleagues open: http://your-pc-hostname.local
+
+{$GAME_HOSTNAME:localhost} {
+  reverse_proxy 127.0.0.1:{$GAME_PORT:8000}
+}

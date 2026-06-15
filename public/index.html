@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LAN Blaster</title>
+  <link rel="icon" href="/favicon.png" type="image/png">
+  <link rel="alternate icon" href="/favicon.svg" type="image/svg+xml">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+    canvas { display: block; width: 100%; height: 100%; }
+    #info {
+      position: absolute; top: 54px; left: 10px;
+      color: #fff; font-family: monospace; font-size: 12px;
+      pointer-events: none; text-shadow: 1px 1px 0 #000;
+    }
+    #options-button {
+      position: absolute; top: 10px; left: 10px; z-index: 12;
+      border: 1px solid rgba(255,255,255,0.78); border-radius: 8px;
+      padding: 8px 11px; background: rgba(0,0,0,0.62); color: #facc15;
+      font-family: monospace; font-weight: 900; cursor: pointer;
+      text-shadow: 1px 1px 0 #000;
+    }
+    #options-button:hover { background: rgba(30,41,59,0.82); }
+    #crosshair {
+      position: absolute; top: 50%; left: 50%;
+      width: 8px; height: 8px;
+      transform: translate(-50%, -50%);
+      border: 2px solid rgba(255,255,255,0.8);
+      border-radius: 50%;
+      pointer-events: none;
+    }
+    #hud {
+      position: absolute; bottom: 20px; left: 20px;
+      color: #fff; font-family: monospace;
+      pointer-events: none; text-shadow: 1px 1px 0 #000;
+    }
+    #weapon { font-size: 18px; font-weight: bold; }
+    #ammo { font-size: 24px; margin-bottom: 8px; }
+    #hp-bar { width: 150px; height: 12px; background: #333; border: 1px solid #fff; }
+    #hp-fill { width: 100%; height: 100%; background: #0f0; }
+    #hp-text { font-size: 12px; margin-top: 2px; }
+    #pickup-toast {
+      position: absolute; top: 34px; left: 50%; transform: translateX(-50%);
+      padding: 12px 20px; border: 2px solid #fff; border-radius: 10px;
+      background: rgba(0,0,0,0.72); color: #facc15;
+      font-family: monospace; font-size: 22px; font-weight: 900;
+      letter-spacing: 0.06em; text-transform: uppercase; text-shadow: 2px 2px 0 #000;
+      pointer-events: none;
+    }
+    #pickup-toast[hidden] { display: none; }
+    #title-screen {
+      position: fixed; inset: 0; z-index: 10;
+      display: grid; place-items: center;
+      background:
+        radial-gradient(circle at 50% 30%, rgba(56,189,248,0.28), transparent 34rem),
+        linear-gradient(135deg, #111827, #020617 58%, #172554);
+      color: white; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    #title-screen[hidden] { display: none; }
+    #title-card {
+      width: min(420px, calc(100vw - 32px));
+      padding: 32px;
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 22px;
+      background: rgba(15,23,42,0.78);
+      box-shadow: 0 24px 90px rgba(0,0,0,0.5);
+      text-align: center;
+      backdrop-filter: blur(14px);
+    }
+    #logo { font-size: 42px; font-weight: 900; letter-spacing: -0.08em; margin-bottom: 8px; }
+    #logo span { color: #38bdf8; }
+    #tagline { color: #cbd5e1; margin-bottom: 24px; }
+    #name-form { display: grid; gap: 12px; }
+    #player-name, #play-button {
+      border: 0; border-radius: 12px; padding: 13px 14px;
+      font: inherit;
+    }
+    #player-name { background: #e5e7eb; color: #020617; outline: 2px solid transparent; }
+    #player-name:focus { outline-color: #38bdf8; }
+    #play-button { background: #facc15; color: #111827; font-weight: 800; cursor: pointer; }
+    #play-button:hover { background: #fde047; }
+    #play-button:disabled { cursor: wait; opacity: 0.65; }
+    #name-error { min-height: 20px; color: #fb7185; font-weight: 800; }
+    #loading-status {
+      min-height: 20px; margin-top: 12px;
+      color: #38bdf8; font-weight: 900; letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    #loading-tip {
+      min-height: 36px; margin-top: 6px;
+      color: #cbd5e1; font-size: 12px; line-height: 1.45;
+    }
+    #pause-menu {
+      position: fixed; inset: 0; z-index: 13;
+      display: grid; place-items: center;
+      background: rgba(2, 6, 23, 0.68);
+      color: white; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    #pause-menu[hidden] { display: none; }
+    #pause-card {
+      width: min(380px, calc(100vw - 32px));
+      padding: 26px;
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 18px;
+      background: rgba(15,23,42,0.92);
+      box-shadow: 0 24px 90px rgba(0,0,0,0.55);
+    }
+    #pause-card h2 { margin-bottom: 18px; }
+    .setting-row {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 16px; padding: 14px 0; border-top: 1px solid rgba(255,255,255,0.12);
+    }
+    .setting-row small { display: block; color: #94a3b8; margin-top: 3px; }
+    #resume-button {
+      width: 100%; margin-top: 18px;
+      border: 0; border-radius: 12px; padding: 12px 14px;
+      background: #38bdf8; color: #020617; font: inherit; font-weight: 900; cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <button id="options-button" type="button">Options</button>
+  <div id="title-screen">
+    <div id="title-card">
+      <div id="logo">LAN <span>BLASTER</span></div>
+      <div id="tagline">Pick a callsign, join the arena.</div>
+      <form id="name-form">
+        <input id="player-name" name="playerName" maxlength="24" placeholder="Username" autocomplete="nickname">
+        <div id="name-error" role="alert"></div>
+        <button id="play-button" type="submit">Join Match</button>
+      </form>
+      <div id="loading-status"></div>
+      <div id="loading-tip"></div>
+    </div>
+  </div>
+  <div id="pause-menu" hidden>
+    <div id="pause-card">
+      <h2>Paused</h2>
+      <div class="setting-row">
+        <div>
+          <strong>Head Sway</strong>
+          <small>Subtle first-person camera movement</small>
+        </div>
+        <input id="head-sway-toggle" type="checkbox">
+      </div>
+      <div class="setting-row">
+        <div>
+          <strong>Music</strong>
+          <small>Generated arena riff</small>
+        </div>
+        <input id="music-toggle" type="checkbox">
+      </div>
+      <div class="setting-row">
+        <div>
+          <strong>Master Volume</strong>
+          <small>Everything audio</small>
+        </div>
+        <input id="master-volume-slider" type="range" min="0" max="1" step="0.05">
+      </div>
+      <div class="setting-row">
+        <div>
+          <strong>Music Volume</strong>
+          <small>Riff loudness</small>
+        </div>
+        <input id="music-volume-slider" type="range" min="0" max="1" step="0.05">
+      </div>
+      <div class="setting-row">
+        <div>
+          <strong>SFX</strong>
+          <small>Weapons, pads, movement</small>
+        </div>
+        <input id="sfx-toggle" type="checkbox">
+      </div>
+      <div class="setting-row">
+        <div>
+          <strong>SFX Volume</strong>
+          <small>Effects loudness</small>
+        </div>
+        <input id="sfx-volume-slider" type="range" min="0" max="1" step="0.05">
+      </div>
+      <div class="setting-row">
+        <div>
+          <strong>Shadows</strong>
+          <small>Richer lighting, costs a little GPU</small>
+        </div>
+        <input id="shadows-toggle" type="checkbox">
+      </div>
+      <div class="setting-row">
+        <div>
+          <strong>Brightness</strong>
+          <small>Scene exposure: <span id="brightness-value">128%</span></small>
+        </div>
+        <input id="brightness-slider" type="range" min="0.8" max="1.8" step="0.05">
+      </div>
+      <button id="resume-button" type="button">Resume</button>
+    </div>
+  </div>
+  <canvas id="game"></canvas>
+  <div id="crosshair"></div>
+  <div id="hud">
+    <div id="weapon">Pistol</div>
+    <div id="ammo">12 / 12</div>
+    <div id="hp-bar"><div id="hp-fill"></div></div>
+    <div id="hp-text">100 / 100</div>
+  </div>
+  <div id="pickup-toast" hidden></div>
+  <div id="info">
+    WASD to move, SPACE to jump, MOUSE to look.<br>
+    Click to shoot, R to reload, 1-3 / mouse wheel to switch weapon.<br>
+    Q/E to lean, C/CTRL to crouch, click to lock pointer, ESC for settings.
+  </div>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+    }
+  }
+  </script>
+  <script type="module" src="./client/client.js"></script>
+</body>
+</html>
