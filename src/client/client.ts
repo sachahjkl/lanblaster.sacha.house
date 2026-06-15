@@ -14,14 +14,14 @@ import {
   clonePlayerState,
   getWeapon,
 } from "../shared/protocol.ts";
-import { JUMP_PADS } from "../shared/mapData.ts";
+import { DEFAULT_LEVEL_ID, LevelDefinition, getLevelData, LEVELS } from "../shared/mapData.ts";
 import {
-  aimTargetPoint,
   applyInput,
   applySpread,
   createPlayer,
-  currentSpread,
-  directionTo,
+  currentSpreadForPlayer,
+  eyePosition,
+  lookDirection,
   muzzlePosition,
   pointOnRay,
   stepPlayer,
@@ -82,18 +82,24 @@ class GameClient {
   onDisconnect: (reason: string) => void;
 
   localId: string | null = null;
-  localState: PlayerState = createPlayer("local");
-  previousLocalState: PlayerState = clonePlayerState(this.localState);
+  level: LevelDefinition;
+  localState: PlayerState;
+  previousLocalState: PlayerState;
   lastSimulationTime = performance.now();
   roomId = "";
   roomName = "";
+  levelId = DEFAULT_LEVEL_ID;
   isHost = false;
+  localVisualStepOffsetY = 0;
 
   inputSeq = 0;
   localLastFireSeq = -9999;
   pendingFire = false;
   pendingReload = false;
   localReloadEndMs = 0;
+  recoilPitch = 0;
+  recoilYaw = 0;
+  recoilRoll = 0;
 
   snapshots: SnapshotEntry[] = [];
   remoteVisualStates = new Map<string, PlayerState>();
@@ -103,19 +109,42 @@ class GameClient {
   hudHpFill = document.getElementById("hp-fill") as HTMLDivElement;
   hudHpText = document.getElementById("hp-text") as HTMLDivElement;
   pickupToast = document.getElementById("pickup-toast") as HTMLDivElement;
+  eventFeed = document.getElementById("event-feed") as HTMLDivElement;
   scoreboard = document.getElementById("scoreboard") as HTMLDivElement;
   scoreboardBody = document.getElementById("scoreboard-body") as HTMLTableSectionElement;
+  deathScreen = document.getElementById("death-screen") as HTMLDivElement;
+  deathMessage = document.getElementById("death-message") as HTMLParagraphElement;
+  respawnButton = document.getElementById("respawn-button") as HTMLButtonElement;
+  damageFlash = document.getElementById("damage-flash") as HTMLDivElement;
+  sniperScope = document.getElementById("sniper-scope") as HTMLDivElement;
+  chatContainer = document.getElementById("chat-container") as HTMLDivElement;
+  chatInput = document.getElementById("chat-input") as HTMLInputElement;
+  reconnectOverlay = document.getElementById("reconnect-overlay") as HTMLDivElement;
+  reconnectMessage = document.getElementById("reconnect-message") as HTMLParagraphElement;
+  reconnectProgressBar = document.getElementById("reconnect-progress-bar") as HTMLDivElement;
+  interactHint = document.getElementById("interact-hint") as HTMLDivElement;
 
   lastRenderTime = performance.now();
   ping = 50;
   pickupToastUntil = 0;
+  damageFlashUntil = 0;
   serverStartedAt: string | null = null;
   lastJumpPadSeq = 0;
+  lastSnapshotTick = 0;
+  lastSnapshotReceivedAt = performance.now();
   stopped = false;
   started = false;
   localSimulationTimer = 0;
   stateFlushTimer = 0;
   healthTimer = 0;
+  lastKillerName = "";
+  lastKillerWeapon = "";
+  roomPassword = "";
+  reconnecting = false;
+  reconnectTimer = 0;
+  reconnectDeadline = 0;
+  reconnectAttemptCount = 0;
+  canInteractFlag = false;
 
   constructor(
     playerName: string,
@@ -128,11 +157,25 @@ class GameClient {
     this.settings = settings;
     this.onDisconnect = onDisconnect;
     this.ws = ws;
+    this.level = getLevelData(welcome.levelId);
+    this.localState = createPlayer("local", this.level);
+    this.previousLocalState = clonePlayerState(this.localState);
+    this.levelId = this.level.id;
     const canvas = document.getElementById("game") as HTMLCanvasElement;
-    this.renderer = new GameRenderer(canvas);
+    this.renderer = new GameRenderer(canvas, this.level);
     this.renderer.applySettings(settings);
     this.audio.startPadHum();
     this.audio.applySettings(settings);
+    this.respawnButton.addEventListener("click", () => this.requestRespawn());
+    this.chatInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        this.submitChat();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        this.closeChat();
+      }
+    });
 
     window.addEventListener("resize", () => this.onResize());
     this.onResize();
@@ -161,7 +204,9 @@ class GameClient {
     if (!this.localId || !this.started) {
       this.stop();
       this.onDisconnect(event.reason || "Could not join match");
+      return;
     }
+    this.beginReconnect(event.reason || "Connection lost");
   }
 
   stop() {
@@ -186,19 +231,25 @@ class GameClient {
   async checkServerHealth() {
     try {
       const response = await fetch("/health", { cache: "no-store" });
-      if (!response.ok) return;
+      if (!response.ok) {
+        this.beginReconnect("Server unreachable");
+        return;
+      }
 
       const status = (await response.json()) as { startedAt?: string };
-      if (!status.startedAt) return;
+      if (!status.startedAt) {
+        this.beginReconnect("Server unreachable");
+        return;
+      }
 
       if (this.serverStartedAt && status.startedAt !== this.serverStartedAt) {
-        window.location.reload();
+        this.beginReconnect("Server restarted");
         return;
       }
 
       this.serverStartedAt = status.startedAt;
     } catch {
-      // Server may be temporarily unavailable while restarting.
+      this.beginReconnect("Server unreachable");
     }
   }
 
@@ -215,8 +266,17 @@ class GameClient {
     this.localState.name = this.playerName;
     this.roomId = msg.roomId;
     this.roomName = msg.roomName;
+    this.levelId = msg.levelId;
+    this.lastSnapshotTick = msg.tick;
+    this.lastSnapshotReceivedAt = performance.now();
     this.isHost = msg.isHost;
     this.renderer.setLocalPlayer(msg.id);
+    // Clean up any stale remote state from a previous connection.
+    for (const id of this.remoteVisualStates.keys()) {
+      this.renderer.removePlayer(id);
+    }
+    this.remoteVisualStates.clear();
+    this.snapshots = [];
     this.updateRoomSettingsUI();
     console.log("Local id", msg.id, "room", msg.roomId);
   }
@@ -233,6 +293,185 @@ class GameClient {
     this.send({ type: "room_update", name, password, maxPlayers });
   }
 
+  requestRespawn() {
+    if (!this.localState.dead) return;
+    this.send({ type: "respawn" });
+  }
+
+  beginReconnect(reason: string) {
+    if (this.reconnecting || this.stopped) return;
+    this.reconnecting = true;
+    this.input.frozen = true;
+    if (document.pointerLockElement) document.exitPointerLock();
+    this.reconnectDeadline = performance.now() + 30000;
+    this.reconnectAttemptCount = 0;
+    this.reconnectMessage.textContent = `${reason}. Trying to reconnect...`;
+    this.reconnectOverlay.hidden = false;
+    this.reconnectProgressBar.style.animation = "none";
+    // force reflow
+    void this.reconnectProgressBar.offsetWidth;
+    this.reconnectProgressBar.style.animation = "reconnect-shrink 30s linear forwards";
+    this.attemptReconnect();
+    this.reconnectTimer = window.setInterval(() => {
+      if (performance.now() >= this.reconnectDeadline) {
+        this.failReconnect("Could not reconnect");
+        return;
+      }
+      this.attemptReconnect();
+    }, 5000);
+  }
+
+  attemptReconnect() {
+    if (!this.reconnecting || this.stopped) return;
+    if (
+      this.ws &&
+      (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)
+    ) {
+      return;
+    }
+    this.reconnectAttemptCount++;
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const params = new URLSearchParams();
+    params.set("name", this.playerName);
+    params.set("room", this.roomId);
+    params.set("password", this.roomPassword);
+
+    const ws = new WebSocket(`${proto}//${window.location.host}?${params.toString()}`);
+    ws.onmessage = (event) => {
+      if (!this.reconnecting) return;
+      const msg = JSON.parse(event.data) as ServerMsg;
+      if (msg.type === "welcome") {
+        this.ws = ws;
+        this.acceptWelcome(msg);
+        this.ws.onmessage = (ev) => this.onMessage(ev.data);
+        this.ws.onclose = (ev) => this.onClose(ev);
+        this.endReconnect();
+      } else if (msg.type === "error") {
+        ws.close();
+      }
+    };
+    ws.onclose = () => {
+      // Retry handled by interval.
+    };
+    ws.onerror = () => {
+      try {
+        ws.close();
+      } catch {
+        // ignore
+      }
+    };
+  }
+
+  endReconnect() {
+    if (!this.reconnecting) return;
+    this.reconnecting = false;
+    this.input.frozen = false;
+    this.reconnectOverlay.hidden = true;
+    window.clearInterval(this.reconnectTimer);
+    this.reconnectTimer = 0;
+  }
+
+  failReconnect(reason: string) {
+    if (this.stopped) return;
+    this.stop();
+    this.reconnecting = false;
+    this.input.frozen = false;
+    this.reconnectOverlay.hidden = true;
+    window.clearInterval(this.reconnectTimer);
+    this.reconnectTimer = 0;
+    try {
+      this.ws?.close();
+    } catch {
+      // ignore
+    }
+    this.ws = null;
+    this.onDisconnect(reason);
+  }
+
+  onDeathEvent(victimId: string, killerId: string, weaponId: string) {
+    if (victimId === this.localId) {
+      this.lastKillerName =
+        killerId === this.localId
+          ? this.playerName
+          : (this.remoteVisualStates.get(killerId)?.name ?? "Unknown");
+      this.lastKillerWeapon = getWeapon(weaponId).name;
+    }
+    if (killerId === this.localId && victimId !== this.localId) {
+      this.audio.playKillConfirm();
+    }
+  }
+
+  openChat() {
+    if (!this.localId || this.localState.dead) return;
+    this.input.chatActive = true;
+    this.chatContainer.classList.add("active");
+    this.chatInput.value = "";
+    this.chatInput.focus();
+  }
+
+  closeChat() {
+    this.input.chatActive = false;
+    this.chatContainer.classList.remove("active");
+    this.chatInput.value = "";
+  }
+
+  submitChat() {
+    const text = this.chatInput.value.trim();
+    if (text) {
+      this.send({ type: "chat", text });
+    }
+    this.closeChat();
+  }
+
+  addRoomEvent(text: string) {
+    const line = document.createElement("div");
+    line.className = "event-line";
+    line.textContent = text;
+    this.eventFeed.prepend(line);
+    while (this.eventFeed.childElementCount > 7) {
+      this.eventFeed.lastElementChild?.remove();
+    }
+    setTimeout(() => line.remove(), 9000);
+  }
+
+  spawnDamageNumber(pos: Vec3, damage: number, crit = false) {
+    this.renderer.spawnDamageNumber(pos, damage, crit);
+  }
+
+  updateInteractHint(state: PlayerState) {
+    if (
+      this.levelId !== "training" ||
+      !this.localId ||
+      state.dead ||
+      this.reconnecting ||
+      this.input.chatActive
+    ) {
+      this.canInteractFlag = false;
+      this.interactHint.classList.remove("active");
+      return;
+    }
+    const eye = eyePosition(state);
+    const dir = lookDirection(state);
+    const look = this.renderer.checkBalloonButtonLook(eye, dir);
+    this.canInteractFlag = look.hit;
+    this.interactHint.textContent = look.hit ? "Press F to release balloons" : "";
+    this.interactHint.classList.toggle("active", look.hit);
+  }
+
+  canInteract(): boolean {
+    return this.canInteractFlag;
+  }
+
+  interact() {
+    if (!this.canInteractFlag) return;
+    this.send({ type: "spawn_balloons" });
+  }
+
+  estimatedServerTick() {
+    const elapsedMs = performance.now() - this.lastSnapshotReceivedAt;
+    return this.lastSnapshotTick + elapsedMs / TICK_DT;
+  }
+
   onMessage(data: string) {
     const msg = JSON.parse(data) as ServerMsg;
     if (msg.type === "welcome") {
@@ -240,7 +479,10 @@ class GameClient {
     } else if (msg.type === "snapshot") {
       this.snapshots.push({ snapshot: msg.snapshot, receivedAt: performance.now() });
       if (this.snapshots.length > MAX_SNAPSHOT_HISTORY) this.snapshots.shift();
+      this.lastSnapshotTick = msg.snapshot.tick;
+      this.lastSnapshotReceivedAt = performance.now();
       this.renderer.updatePickups(msg.snapshot.pickups);
+      this.renderer.updateBalloons(msg.snapshot.balloons);
       this.applyAuthoritativeNonMovementState(msg.snapshot);
       this.updateScoreboard(msg.snapshot);
     } else if (msg.type === "fire") {
@@ -248,17 +490,31 @@ class GameClient {
     } else if (msg.type === "hit") {
       if (msg.victimId === this.localId) {
         this.localState.hp = msg.hp;
+        this.damageFlashUntil = performance.now() + 130;
         this.audio.playHit();
       }
+      if (msg.shooterId === this.localId && msg.victimId !== this.localId) {
+        this.audio.playHitMarker();
+        if (msg.pos) {
+          this.renderer.addHitParticles(msg.pos);
+          this.spawnDamageNumber(msg.pos, msg.damage, msg.crit);
+        }
+      }
+      this.renderer.flashPlayer(msg.victimId);
     } else if (msg.type === "pong") {
       this.ping = (performance.now() - msg.clientTime) * 0.5;
     } else if (msg.type === "room_info") {
       this.roomName = msg.name;
+      this.levelId = msg.levelId;
       this.isHost = msg.hostId === this.localId;
       this.updateRoomSettingsUI();
     } else if (msg.type === "pickup") {
       this.pickupToast.textContent = `Picked up ${msg.label}`;
       this.pickupToastUntil = performance.now() + 1800;
+    } else if (msg.type === "death") {
+      this.onDeathEvent(msg.victimId, msg.killerId, msg.weaponId);
+    } else if (msg.type === "room_event") {
+      this.addRoomEvent(msg.text);
     }
   }
 
@@ -294,7 +550,7 @@ class GameClient {
   onFireEvent(ev: FireEvent) {
     if (ev.shooterId === this.localId) return;
 
-    this.audio.playShoot();
+    this.audio.playShoot(ev.weaponId);
     const origin = ev.origin;
     const dir = ev.direction;
     const maxLen = 200;
@@ -359,23 +615,16 @@ class GameClient {
     ) {
       this.localState.reloadEndTick = input.seq + reloadDurationTicks;
       this.localReloadEndMs = performance.now() + weapon.reloadMs;
-      this.audio.playReload();
+      this.audio.playReload(weapon.id);
     }
 
     applyInput(this.localState, input);
     const jumpPadSeqBefore = this.localState.jumpPadSeq;
-    stepPlayer(this.localState, TICK_DT / 1000);
+    stepPlayer(this.localState, TICK_DT / 1000, this.level);
     if (this.localState.jumpPadSeq > jumpPadSeqBefore) {
       this.audio.playJumpPad();
       this.lastJumpPadSeq = this.localState.jumpPadSeq;
     }
-
-    this.localState.spreadAccumMs = updateSpreadAccum(
-      weapon,
-      this.localState.spreadAccumMs,
-      TICK_DT,
-      input.fire,
-    );
 
     if (
       input.fire &&
@@ -387,22 +636,58 @@ class GameClient {
       if (input.seq - this.localLastFireSeq >= cooldownTicks) {
         this.localLastFireSeq = input.seq;
         this.localState.ammo--;
-        this.audio.playShoot();
-        const spread = currentSpread(weapon, this.localState.spreadAccumMs);
+        this.audio.playShoot(weapon.id);
+        const spread = currentSpreadForPlayer(
+          this.localState,
+          weapon,
+          this.localState.spreadAccumMs,
+        );
+        const minSpread = Math.min(
+          weapon.spreadStanding ?? 0,
+          weapon.spreadMoving ?? weapon.spread ?? 0,
+        );
+        const maxSpread = weapon.spreadMax ?? spread;
+        const spreadRange = Math.max(0.0001, maxSpread - minSpread);
+        const spreadRatio = Math.max(0, Math.min(1, (spread - minSpread) / spreadRange));
+        const recoilScale = 1 + spreadRatio * 0.35;
+        const stanceScale =
+          (this.localState.grounded ? 1 : (weapon.recoilAirborneMultiplier ?? 1.25)) *
+          (this.localState.crouching ? (weapon.recoilCrouchMultiplier ?? 0.85) : 1);
+        const totalRecoilScale = recoilScale * stanceScale;
+        const aimPitchKick = (weapon.aimRecoilPitch ?? 0) * totalRecoilScale;
+        const aimYawKick = (Math.random() * 2 - 1) * (weapon.aimRecoilYaw ?? 0) * totalRecoilScale;
+        const visualPitchKick = (weapon.visualRecoilPitch ?? 0) * totalRecoilScale;
+        const visualYawKick =
+          (Math.random() * 2 - 1) * (weapon.visualRecoilYaw ?? 0) * totalRecoilScale;
+        const visualRollKick =
+          ((Math.random() * 2 - 1) * (weapon.visualRecoilRoll ?? 0) + visualYawKick * 0.6) *
+          totalRecoilScale;
+        this.input.addRecoil(aimPitchKick, aimYawKick);
+        this.localState.pitch = this.input.pitch;
+        this.localState.yaw = this.input.yaw;
+        this.recoilPitch += visualPitchKick;
+        this.recoilYaw += visualYawKick;
+        this.recoilRoll += visualRollKick;
         const pellets = weapon.pelletCount ?? 1;
         for (let i = 0; i < pellets; i++) {
           const origin = muzzlePosition(this.localState, spread);
-          const aimPoint = aimTargetPoint(this.localState, SETTINGS.combat.fireMaxDistance);
-          const dir = applySpread(directionTo(origin, aimPoint), spread);
+          const dir = applySpread(lookDirection(this.localState), spread);
           const end = pointOnRay(origin, dir, SETTINGS.combat.fireMaxDistance);
           this.renderer.addTracer(origin, end);
         }
       }
     }
+
+    this.localState.spreadAccumMs = updateSpreadAccum(
+      weapon,
+      this.localState.spreadAccumMs,
+      TICK_DT,
+      input.fire,
+    );
   }
 
   tickLocalSimulation() {
-    if (!this.localId || this.localState.dead) return;
+    if (!this.localId || this.localState.dead || this.reconnecting) return;
 
     const wasGrounded = this.localState.grounded;
     this.previousLocalState = clonePlayerState(this.localState);
@@ -410,12 +695,22 @@ class GameClient {
 
     const input = this.input.sample(this.inputSeq);
     if (input.jump && wasGrounded) this.audio.playJump();
-    if (input.reload) this.audio.playReload();
     this.pendingFire ||= input.fire;
     this.pendingReload ||= input.reload;
     this.applyInputPrediction(input);
 
     const horizontalSpeed = Math.hypot(this.localState.vel.x, this.localState.vel.z);
+    const stepUp = this.localState.pos.y - this.previousLocalState.pos.y;
+    if (
+      this.localState.grounded &&
+      stepUp > 0.05 &&
+      stepUp <= SETTINGS.player.maxStepHeight + 0.05 &&
+      horizontalSpeed > 0.25
+    ) {
+      this.localVisualStepOffsetY = Math.max(this.localVisualStepOffsetY - stepUp, -0.8);
+    } else if (stepUp < -0.2) {
+      this.localVisualStepOffsetY = 0;
+    }
     if (this.localState.grounded && horizontalSpeed > 0.5) {
       this.audio.playFootstep();
     }
@@ -432,7 +727,8 @@ class GameClient {
           (this.localState.pos.x - this.previousLocalState.pos.x) * alpha,
         y:
           this.previousLocalState.pos.y +
-          (this.localState.pos.y - this.previousLocalState.pos.y) * alpha,
+          (this.localState.pos.y - this.previousLocalState.pos.y) * alpha +
+          this.localVisualStepOffsetY,
         z:
           this.previousLocalState.pos.z +
           (this.localState.pos.z - this.previousLocalState.pos.z) * alpha,
@@ -456,6 +752,31 @@ class GameClient {
       hpRatio > 0.5 ? "#0f0" : hpRatio > 0.25 ? "#ff0" : "#f00";
     this.hudHpText.textContent = `${Math.max(0, p.hp)} / ${p.maxHp}`;
     this.pickupToast.hidden = performance.now() > this.pickupToastUntil;
+    this.damageFlash.classList.toggle("active", performance.now() < this.damageFlashUntil);
+    const remainingMs = Math.max(
+      0,
+      (this.localState.respawnTick - this.estimatedServerTick()) * TICK_DT,
+    );
+    const remainingSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+    this.deathScreen.hidden = !p.dead;
+    if (p.dead) {
+      const killerLine = this.lastKillerName
+        ? `Killed by ${this.lastKillerName} (${this.lastKillerWeapon})`
+        : "You died";
+      this.deathMessage.innerHTML = `${killerLine}<br>${remainingSeconds} second${
+        remainingSeconds === 1 ? "" : "s"
+      } until auto respawn.`;
+    } else {
+      this.deathMessage.textContent = "Respawn when you're ready.";
+      this.lastKillerName = "";
+      this.lastKillerWeapon = "";
+    }
+    this.respawnButton.textContent = p.dead
+      ? `Respawn Now (${remainingSeconds}s auto)`
+      : "Respawn Now";
+
+    const scoped = !p.dead && this.input.aiming && getWeapon(p.weaponId).id === "sniper";
+    this.sniperScope.classList.toggle("active", scoped);
   }
 
   updateScoreboard(snapshot: Snapshot) {
@@ -488,30 +809,51 @@ class GameClient {
 
     const renderDt = Math.min(100, now - this.lastRenderTime) / 1000;
     this.lastRenderTime = now;
+    const weapon = getWeapon(this.localState.weaponId);
+    const recoilRecoverMs = weapon.recoilRecoverMs ?? 160;
+    const recoilDecay = Math.exp((-renderDt * 1000) / recoilRecoverMs);
+    this.recoilPitch *= recoilDecay;
+    this.recoilYaw *= recoilDecay;
+    this.recoilRoll *= recoilDecay;
+    this.localVisualStepOffsetY *= Math.exp(-renderDt * 18);
+    if (Math.abs(this.localVisualStepOffsetY) < 0.001) {
+      this.localVisualStepOffsetY = 0;
+    }
 
     const renderedLocalState = this.getRenderedLocalState(now);
+    const renderedWeapon = getWeapon(renderedLocalState.weaponId);
+    const cameraAimFov = this.input.aimFov(renderedWeapon);
     this.renderer.setCameraFromPlayer(
       renderedLocalState,
       renderDt,
       this.settings.headSway,
       this.input.lean,
       this.input.aiming,
+      cameraAimFov,
+      this.recoilPitch,
+      this.recoilYaw,
+      this.recoilRoll,
     );
     this.renderer.updatePlayer(renderedLocalState, true);
-    const weapon = getWeapon(renderedLocalState.weaponId);
     const reloadProgress =
       this.localReloadEndMs > 0
-        ? Math.min(1, Math.max(0, 1 - (this.localReloadEndMs - now) / weapon.reloadMs))
+        ? Math.min(1, Math.max(0, 1 - (this.localReloadEndMs - now) / renderedWeapon.reloadMs))
         : 0;
     this.renderer.updateFirstPersonWeapon(
       renderedLocalState,
       renderDt,
       this.input.aiming,
       reloadProgress,
+      this.recoilPitch,
+      this.recoilYaw,
+      this.recoilRoll,
     );
     this.updateRemotePlayers(renderDt);
     this.renderer.updateMovingPlatforms(now);
     this.renderer.updateTracers(renderDt);
+    this.renderer.updateHitParticles(renderDt);
+    this.renderer.updateDamageNumbers(renderDt);
+    this.updateInteractHint(renderedLocalState);
     this.updatePadHum(renderedLocalState);
     this.updateHUD();
     this.renderer.render();
@@ -521,7 +863,7 @@ class GameClient {
 
   updatePadHum(state: PlayerState) {
     let strongest = 0;
-    for (const pad of JUMP_PADS) {
+    for (const pad of this.level.jumpPads) {
       const cx = (pad.min.x + pad.max.x) * 0.5;
       const cy = (pad.min.y + pad.max.y) * 0.5;
       const cz = (pad.min.z + pad.max.z) * 0.5;
@@ -597,6 +939,7 @@ const joinPanel = document.getElementById("join-panel") as HTMLDivElement;
 const createRoomName = document.getElementById("create-room-name") as HTMLInputElement;
 const autoRoomName = document.getElementById("auto-room-name") as HTMLSpanElement;
 const createRoomPassword = document.getElementById("create-room-password") as HTMLInputElement;
+const createRoomLevel = document.getElementById("create-room-level") as HTMLSelectElement;
 const createRoomMax = document.getElementById("create-room-max") as HTMLSelectElement;
 const createRoomButton = document.getElementById("create-room-button") as HTMLButtonElement;
 const joinRoomPassword = document.getElementById("join-room-password") as HTMLInputElement;
@@ -640,6 +983,9 @@ sfxVolumeSlider.value = String(settings.sfxVolume);
 shadowsToggle.checked = settings.shadows;
 brightnessSlider.value = String(settings.brightness);
 brightnessValue.textContent = `${Math.round(settings.brightness * 100)}%`;
+createRoomLevel.innerHTML = LEVELS.map(
+  (level) => `<option value="${level.id}">${level.name}</option>`,
+).join("");
 nameInput.focus();
 
 function applyGraphicsSettings() {
@@ -676,13 +1022,40 @@ function setPauseMenuVisible(visible: boolean) {
 
 window.addEventListener("keydown", (event) => {
   if (!titleScreen.hidden) return;
+  if (activeClient?.reconnecting) {
+    event.preventDefault();
+    return;
+  }
+  if (activeClient?.chatContainer.classList.contains("active")) {
+    if (event.code === "Escape") {
+      event.preventDefault();
+      activeClient.closeChat();
+    }
+    return;
+  }
+  if (event.code === "Space" && activeClient?.localState.dead) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    activeClient.requestRespawn();
+    return;
+  }
+  if (event.code === "KeyT" && activeClient) {
+    event.preventDefault();
+    activeClient.openChat();
+    return;
+  }
+  if (event.code === "KeyF" && activeClient && activeClient.canInteract()) {
+    event.preventDefault();
+    activeClient.interact();
+    return;
+  }
   if (event.code === "Escape") {
     event.preventDefault();
     setPauseMenuVisible(pauseMenu.hidden === true);
   } else if (event.code === "KeyP") {
     event.preventDefault();
-    if (activeClient) {
-      activeClient.scoreboard.hidden = !activeClient.scoreboard.hidden;
+    if (!event.repeat && activeClient) {
+      activeClient.scoreboard.hidden = false;
     }
   }
 });
@@ -749,6 +1122,7 @@ brightnessSlider.addEventListener("input", () => {
 interface JoinOptions {
   roomId?: string;
   roomName?: string;
+  levelId?: string;
   password?: string;
   maxPlayers?: number;
 }
@@ -763,6 +1137,7 @@ function connectForJoin(
     params.set("name", playerName);
     if (options.roomId) params.set("room", options.roomId);
     if (options.roomName) params.set("roomName", options.roomName);
+    if (options.levelId) params.set("levelId", options.levelId);
     if (options.password) params.set("password", options.password);
     if (options.maxPlayers) params.set("maxPlayers", String(options.maxPlayers));
 
@@ -803,6 +1178,7 @@ async function doJoin(options: JoinOptions) {
       void fetchRoomList();
     });
     await client.ready;
+    client.roomPassword = options.password ?? "";
     activeClient = client;
     clearLoading();
     titleScreen.hidden = true;
@@ -827,6 +1203,8 @@ async function fetchRoomList() {
     const list = (await res.json()) as {
       id: string;
       name: string;
+      levelId: string;
+      levelName: string;
       playerCount: number;
       maxPlayers: number;
       hasPassword: boolean;
@@ -841,6 +1219,8 @@ function renderRoomList(
   list: {
     id: string;
     name: string;
+    levelId: string;
+    levelName: string;
     playerCount: number;
     maxPlayers: number;
     hasPassword: boolean;
@@ -856,7 +1236,7 @@ function renderRoomList(
       <div>
         <strong>${room.name}</strong>
         <span style="opacity:0.5;font-size:11px;margin-left:6px;">#${shortId}</span>
-        <div style="font-size:11px;color:#94a3b8;">${room.playerCount}/${room.maxPlayers} players</div>
+        <div style="font-size:11px;color:#94a3b8;">${room.levelName} • ${room.playerCount}/${room.maxPlayers} players</div>
       </div>
       <div>${room.hasPassword ? '<span class="room-item-locked">LOCKED</span>' : ""}</div>
     `;
@@ -918,6 +1298,7 @@ function generateRoomName(): string {
 createRoomButton.addEventListener("click", () => {
   void doJoin({
     roomName: createRoomName.value,
+    levelId: createRoomLevel.value,
     password: createRoomPassword.value,
     maxPlayers: Number(createRoomMax.value),
   });

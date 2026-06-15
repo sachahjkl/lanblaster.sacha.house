@@ -6,6 +6,8 @@ interface AudioSettings {
   sfxVolume: number;
 }
 
+type WeaponAudioId = "pistol" | "rifle" | "sniper" | "shotgun";
+
 export class AudioManager {
   ctx = new AudioContext();
   masterGain = this.ctx.createGain();
@@ -109,18 +111,182 @@ export class AudioManager {
     this.playTone(180, 0.09, 0.08, "triangle");
   }
 
-  playShoot() {
-    this.playNoise(0.08, 0.18, 2400);
-    this.playTone(95, 0.06, 0.08, "sawtooth");
+  randomOf<T>(variants: T[]): T {
+    return variants[Math.floor(Math.random() * variants.length)] ?? variants[0];
   }
 
-  playReload() {
-    this.playNoise(0.12, 0.08, 1200);
-    setTimeout(() => this.playTone(480, 0.04, 0.05, "square"), 90);
+  playShoot(weaponId: string = "pistol") {
+    const weapon = weaponId as WeaponAudioId;
+    if (weapon === "rifle") {
+      const variant = this.randomOf([
+        () => {
+          this.playNoise(0.055, 0.14, 2900);
+          this.playTone(128, 0.045, 0.06, "square");
+          setTimeout(() => this.playTone(210, 0.025, 0.03, "triangle"), 14);
+        },
+        () => {
+          this.playNoise(0.05, 0.13, 3200);
+          this.playTone(142, 0.05, 0.055, "sawtooth");
+          setTimeout(() => this.playNoise(0.018, 0.05, 5400), 18);
+        },
+        () => {
+          this.playNoise(0.06, 0.12, 2600);
+          this.playTone(118, 0.04, 0.065, "square");
+        },
+      ]);
+      variant();
+      return;
+    }
+    if (weapon === "sniper") {
+      const variant = this.randomOf([
+        () => {
+          this.playNoise(0.12, 0.22, 1800);
+          this.playTone(78, 0.09, 0.11, "sawtooth");
+          setTimeout(() => this.playTone(42, 0.08, 0.08, "triangle"), 24);
+        },
+        () => {
+          this.playNoise(0.1, 0.2, 1500);
+          this.playTone(84, 0.1, 0.1, "square");
+          setTimeout(() => this.playNoise(0.03, 0.05, 4200), 30);
+        },
+      ]);
+      variant();
+      return;
+    }
+    if (weapon === "shotgun") {
+      const variant = this.randomOf([
+        () => {
+          this.playNoise(0.13, 0.28, 1700);
+          this.playTone(70, 0.075, 0.11, "square");
+          setTimeout(() => this.playNoise(0.035, 0.09, 900), 20);
+        },
+        () => {
+          this.playNoise(0.12, 0.26, 1500);
+          this.playTone(62, 0.08, 0.12, "sawtooth");
+          setTimeout(() => this.playTone(96, 0.035, 0.04, "triangle"), 16);
+        },
+        () => {
+          this.playNoise(0.11, 0.24, 1400);
+          this.playTone(68, 0.085, 0.1, "square");
+        },
+      ]);
+      variant();
+      return;
+    }
+
+    const variant = this.randomOf([
+      () => {
+        this.playNoise(0.07, 0.14, 2600);
+        this.playTone(105, 0.05, 0.07, "sawtooth");
+      },
+      () => {
+        this.playNoise(0.06, 0.13, 3000);
+        this.playTone(120, 0.04, 0.06, "square");
+        setTimeout(() => this.playTone(180, 0.02, 0.025, "triangle"), 12);
+      },
+      () => {
+        this.playNoise(0.065, 0.12, 2400);
+        this.playTone(92, 0.055, 0.065, "sawtooth");
+      },
+    ]);
+    variant();
+  }
+
+  playReload(weaponId: string = "pistol") {
+    const weapon = weaponId as WeaponAudioId;
+    if (weapon === "rifle") {
+      // Mag out -> mag in -> bolt slap
+      this.playNoise(0.06, 0.09, 1600);
+      setTimeout(() => this.playNoise(0.05, 0.1, 1400), 120);
+      setTimeout(() => this.playTone(340, 0.045, 0.05, "square"), 140);
+      setTimeout(() => {
+        this.playNoise(0.07, 0.12, 2200);
+        this.playTone(520, 0.035, 0.05, "sawtooth");
+      }, 420);
+      setTimeout(() => this.playNoise(0.05, 0.08, 2600), 620);
+      setTimeout(() => this.playTone(610, 0.025, 0.035, "square"), 820);
+      return;
+    }
+    if (weapon === "sniper") {
+      // Bolt open -> round chamber -> bolt close
+      this.playNoise(0.08, 0.09, 1100);
+      setTimeout(() => this.playTone(220, 0.05, 0.04, "square"), 140);
+      setTimeout(() => {
+        this.playNoise(0.06, 0.08, 900);
+        this.playTone(260, 0.045, 0.035, "triangle");
+      }, 380);
+      setTimeout(() => {
+        this.playNoise(0.09, 0.12, 1800);
+        this.playTone(180, 0.06, 0.05, "sawtooth");
+      }, 720);
+      setTimeout(() => this.playNoise(0.05, 0.07, 2400), 980);
+      return;
+    }
+    if (weapon === "shotgun") {
+      // Pump -> shell clatter -> pump home
+      this.playNoise(0.08, 0.11, 900);
+      setTimeout(() => this.playTone(150, 0.055, 0.05, "square"), 80);
+      setTimeout(() => {
+        this.playNoise(0.06, 0.08, 600);
+        this.playTone(240, 0.04, 0.035, "triangle");
+      }, 260);
+      setTimeout(() => {
+        this.playNoise(0.1, 0.13, 1400);
+        this.playTone(120, 0.07, 0.06, "sawtooth");
+      }, 700);
+      setTimeout(() => this.playNoise(0.06, 0.09, 1100), 950);
+      return;
+    }
+
+    // Pistol: mag drop -> mag seat -> slide release
+    this.playNoise(0.07, 0.09, 1300);
+    setTimeout(() => this.playTone(420, 0.035, 0.04, "square"), 80);
+    setTimeout(() => {
+      this.playNoise(0.06, 0.1, 1500);
+      this.playTone(380, 0.04, 0.045, "triangle");
+    }, 220);
+    setTimeout(() => {
+      this.playNoise(0.08, 0.12, 2400);
+      this.playTone(520, 0.045, 0.05, "sawtooth");
+    }, 520);
+    setTimeout(() => this.playNoise(0.05, 0.07, 2600), 680);
   }
 
   playHit() {
     this.playTone(70, 0.12, 0.08, "sawtooth");
+  }
+
+  playHitMarker() {
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(1200, now);
+    osc.frequency.exponentialRampToValueAtTime(1800, now + 0.05);
+    gain.gain.setValueAtTime(0.12, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+    osc.connect(gain).connect(this.sfxGain);
+    osc.start(now);
+    osc.stop(now + 0.08);
+  }
+
+  playKillConfirm() {
+    const now = this.ctx.currentTime;
+    const playBell = (freq: number, delay: number, duration: number, gain: number) => {
+      const osc = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, now + delay);
+      g.gain.setValueAtTime(0, now + delay);
+      g.gain.linearRampToValueAtTime(gain, now + delay + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.001, now + delay + duration);
+      osc.connect(g).connect(this.sfxGain);
+      osc.start(now + delay);
+      osc.stop(now + delay + duration);
+    };
+    playBell(880, 0, 0.14, 0.12);
+    playBell(1109, 0.06, 0.16, 0.09);
+    playBell(1319, 0.12, 0.2, 0.08);
   }
 
   playJumpPad() {

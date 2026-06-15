@@ -23,7 +23,7 @@ export const SETTINGS = {
     maxStepHeight: 0.95,
   },
   combat: {
-    respawnMs: 3000,
+    respawnMs: 5000,
     fireMaxDistance: 200,
   },
   weaponVisuals: {

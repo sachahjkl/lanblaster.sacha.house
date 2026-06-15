@@ -16,97 +16,121 @@ import {
   WEAPONS,
   movingPlatformPosition,
 } from "./protocol.ts";
-import { JUMP_PADS, LADDERS, LEVEL, MOVING_PLATFORMS, SPAWN_POINTS } from "./mapData.ts";
+import { DEFAULT_LEVEL_ID, LevelDefinition, getLevelData } from "./mapData.ts";
 import { SETTINGS } from "./settings.ts";
-
-const LEVEL_BOUNDS = LEVEL.reduce(
-  (bounds, box) => ({
-    min: {
-      x: Math.min(bounds.min.x, box.min.x),
-      y: Math.min(bounds.min.y, box.min.y),
-      z: Math.min(bounds.min.z, box.min.z),
-    },
-    max: {
-      x: Math.max(bounds.max.x, box.max.x),
-      y: Math.max(bounds.max.y, box.max.y),
-      z: Math.max(bounds.max.z, box.max.z),
-    },
-  }),
-  {
-    min: { x: Infinity, y: Infinity, z: Infinity },
-    max: { x: -Infinity, y: -Infinity, z: -Infinity },
-  },
-);
 
 const LEVEL_COLLIDER_MARGIN = 1.5;
 const LEVEL_WALL_HEIGHT = 24;
-const FALL_OUT_Y = LEVEL_BOUNDS.min.y - 8;
-const LEVEL_GUARD_COLLIDERS = [
-  {
-    min: {
-      x: LEVEL_BOUNDS.min.x - LEVEL_COLLIDER_MARGIN,
-      y: LEVEL_BOUNDS.min.y - 1,
-      z: LEVEL_BOUNDS.min.z - LEVEL_COLLIDER_MARGIN,
-    },
-    max: {
-      x: LEVEL_BOUNDS.max.x + LEVEL_COLLIDER_MARGIN,
-      y: LEVEL_BOUNDS.min.y,
-      z: LEVEL_BOUNDS.max.z + LEVEL_COLLIDER_MARGIN,
-    },
-  },
-  {
-    min: {
-      x: LEVEL_BOUNDS.min.x - LEVEL_COLLIDER_MARGIN,
-      y: LEVEL_BOUNDS.min.y,
-      z: LEVEL_BOUNDS.min.z - LEVEL_COLLIDER_MARGIN,
-    },
-    max: {
-      x: LEVEL_BOUNDS.min.x,
-      y: LEVEL_BOUNDS.max.y + LEVEL_WALL_HEIGHT,
-      z: LEVEL_BOUNDS.max.z + LEVEL_COLLIDER_MARGIN,
-    },
-  },
-  {
-    min: {
-      x: LEVEL_BOUNDS.max.x,
-      y: LEVEL_BOUNDS.min.y,
-      z: LEVEL_BOUNDS.min.z - LEVEL_COLLIDER_MARGIN,
-    },
-    max: {
-      x: LEVEL_BOUNDS.max.x + LEVEL_COLLIDER_MARGIN,
-      y: LEVEL_BOUNDS.max.y + LEVEL_WALL_HEIGHT,
-      z: LEVEL_BOUNDS.max.z + LEVEL_COLLIDER_MARGIN,
-    },
-  },
-  {
-    min: {
-      x: LEVEL_BOUNDS.min.x,
-      y: LEVEL_BOUNDS.min.y,
-      z: LEVEL_BOUNDS.min.z - LEVEL_COLLIDER_MARGIN,
-    },
-    max: {
-      x: LEVEL_BOUNDS.max.x,
-      y: LEVEL_BOUNDS.max.y + LEVEL_WALL_HEIGHT,
-      z: LEVEL_BOUNDS.min.z,
-    },
-  },
-  {
-    min: {
-      x: LEVEL_BOUNDS.min.x,
-      y: LEVEL_BOUNDS.min.y,
-      z: LEVEL_BOUNDS.max.z,
-    },
-    max: {
-      x: LEVEL_BOUNDS.max.x,
-      y: LEVEL_BOUNDS.max.y + LEVEL_WALL_HEIGHT,
-      z: LEVEL_BOUNDS.max.z + LEVEL_COLLIDER_MARGIN,
-    },
-  },
-] as const;
-const LEVEL_COLLIDERS = [...LEVEL, ...LEVEL_GUARD_COLLIDERS];
 
-export function createPlayer(id: string, spawnIndex = 0): PlayerState {
-  const spawn = SPAWN_POINTS[spawnIndex % SPAWN_POINTS.length];
+interface DerivedLevelData {
+  colliders: { min: Vec3; max: Vec3; color?: number }[];
+  fallOutY: number;
+}
+
+const derivedLevelCache = new Map<string, DerivedLevelData>();
+
+function resolveLevel(level?: LevelDefinition): LevelDefinition {
+  return level ?? getLevelData(DEFAULT_LEVEL_ID);
+}
+
+function getDerivedLevelData(level?: LevelDefinition): DerivedLevelData {
+  const resolvedLevel = resolveLevel(level);
+  const cached = derivedLevelCache.get(resolvedLevel.id);
+  if (cached) return cached;
+
+  const bounds = resolvedLevel.boxes.reduce(
+    (next, box) => ({
+      min: {
+        x: Math.min(next.min.x, box.min.x),
+        y: Math.min(next.min.y, box.min.y),
+        z: Math.min(next.min.z, box.min.z),
+      },
+      max: {
+        x: Math.max(next.max.x, box.max.x),
+        y: Math.max(next.max.y, box.max.y),
+        z: Math.max(next.max.z, box.max.z),
+      },
+    }),
+    {
+      min: { x: Infinity, y: Infinity, z: Infinity },
+      max: { x: -Infinity, y: -Infinity, z: -Infinity },
+    },
+  );
+
+  const guardColliders = [
+    {
+      min: {
+        x: bounds.min.x - LEVEL_COLLIDER_MARGIN,
+        y: bounds.min.y - 1,
+        z: bounds.min.z - LEVEL_COLLIDER_MARGIN,
+      },
+      max: {
+        x: bounds.max.x + LEVEL_COLLIDER_MARGIN,
+        y: bounds.min.y,
+        z: bounds.max.z + LEVEL_COLLIDER_MARGIN,
+      },
+    },
+    {
+      min: {
+        x: bounds.min.x - LEVEL_COLLIDER_MARGIN,
+        y: bounds.min.y,
+        z: bounds.min.z - LEVEL_COLLIDER_MARGIN,
+      },
+      max: {
+        x: bounds.min.x,
+        y: bounds.max.y + LEVEL_WALL_HEIGHT,
+        z: bounds.max.z + LEVEL_COLLIDER_MARGIN,
+      },
+    },
+    {
+      min: {
+        x: bounds.max.x,
+        y: bounds.min.y,
+        z: bounds.min.z - LEVEL_COLLIDER_MARGIN,
+      },
+      max: {
+        x: bounds.max.x + LEVEL_COLLIDER_MARGIN,
+        y: bounds.max.y + LEVEL_WALL_HEIGHT,
+        z: bounds.max.z + LEVEL_COLLIDER_MARGIN,
+      },
+    },
+    {
+      min: {
+        x: bounds.min.x,
+        y: bounds.min.y,
+        z: bounds.min.z - LEVEL_COLLIDER_MARGIN,
+      },
+      max: {
+        x: bounds.max.x,
+        y: bounds.max.y + LEVEL_WALL_HEIGHT,
+        z: bounds.min.z,
+      },
+    },
+    {
+      min: {
+        x: bounds.min.x,
+        y: bounds.min.y,
+        z: bounds.max.z,
+      },
+      max: {
+        x: bounds.max.x,
+        y: bounds.max.y + LEVEL_WALL_HEIGHT,
+        z: bounds.max.z + LEVEL_COLLIDER_MARGIN,
+      },
+    },
+  ];
+
+  const derived = {
+    colliders: [...resolvedLevel.boxes, ...guardColliders],
+    fallOutY: bounds.min.y - 8,
+  };
+  derivedLevelCache.set(resolvedLevel.id, derived);
+  return derived;
+}
+
+export function createPlayer(id: string, level?: LevelDefinition, spawnIndex = 0): PlayerState {
+  const resolvedLevel = resolveLevel(level);
+  const spawn = resolvedLevel.spawnPoints[spawnIndex % resolvedLevel.spawnPoints.length];
   const weapon = WEAPONS[0];
   return {
     id,
@@ -137,8 +161,9 @@ export function createPlayer(id: string, spawnIndex = 0): PlayerState {
   };
 }
 
-export function resetPlayer(p: PlayerState, spawnIndex = 0): void {
-  const spawn = SPAWN_POINTS[spawnIndex % SPAWN_POINTS.length];
+export function resetPlayer(p: PlayerState, level?: LevelDefinition, spawnIndex = 0): void {
+  const resolvedLevel = resolveLevel(level);
+  const spawn = resolvedLevel.spawnPoints[spawnIndex % resolvedLevel.spawnPoints.length];
   const weapon = WEAPONS[0];
   p.pos = cloneVec3(spawn);
   p.vel = { x: 0, y: 0, z: 0 };
@@ -266,7 +291,27 @@ export function muzzlePosition(p: PlayerState, spread = 0): Vec3 {
 }
 
 export function currentSpread(weapon: (typeof WEAPONS)[number], accumMs: number): number {
-  const minSpread = weapon.spread ?? 0;
+  return currentSpreadForPlayer(
+    { vel: { x: 0, y: 0, z: 0 }, platformVel: { x: 0, y: 0, z: 0 } } as PlayerState,
+    weapon,
+    accumMs,
+  );
+}
+
+function horizontalSpeed(p: PlayerState): number {
+  return Math.hypot(p.vel.x + p.platformVel.x, p.vel.z + p.platformVel.z);
+}
+
+export function currentSpreadForPlayer(
+  p: PlayerState,
+  weapon: (typeof WEAPONS)[number],
+  accumMs: number,
+): number {
+  const fallbackSpread = weapon.spread ?? 0;
+  const stationaryMinSpread = weapon.spreadStanding ?? 0;
+  const movingMinSpread = weapon.spreadMoving ?? fallbackSpread;
+  const moveThreshold = weapon.spreadMoveThreshold ?? 0.75;
+  const minSpread = horizontalSpeed(p) > moveThreshold ? movingMinSpread : stationaryMinSpread;
   const maxSpread = weapon.spreadMax ?? minSpread;
   const rampMs = weapon.spreadRampMs ?? 0;
   if (rampMs <= 0 || maxSpread <= minSpread) return minSpread;
@@ -322,9 +367,14 @@ function rayIntersectAABB(origin: Vec3, dir: Vec3, box: { min: Vec3; max: Vec3 }
   return tmin >= 0 ? tmin : tmax;
 }
 
-export function raycastLevel(origin: Vec3, dir: Vec3, maxDist: number): number | null {
+export function raycastLevel(
+  origin: Vec3,
+  dir: Vec3,
+  maxDist: number,
+  level?: LevelDefinition,
+): number | null {
   let best: number | null = null;
-  for (const box of LEVEL_COLLIDERS) {
+  for (const box of getDerivedLevelData(level).colliders) {
     const t = rayIntersectAABB(origin, dir, box);
     if (t !== null && t <= maxDist && (best === null || t < best)) {
       best = t;
@@ -333,28 +383,136 @@ export function raycastLevel(origin: Vec3, dir: Vec3, maxDist: number): number |
   return best;
 }
 
+function raycastCapsule(origin: Vec3, dir: Vec3, player: PlayerState): number | null {
+  const r = PLAYER_RADIUS;
+  const h = player.crouching ? PLAYER_CROUCH_HEIGHT : PLAYER_HEIGHT;
+  const cy = player.pos.y + h * 0.5;
+  const halfLen = Math.max(0, h * 0.5 - r);
+  const a = { x: player.pos.x, y: cy - halfLen, z: player.pos.z };
+  const b = { x: player.pos.x, y: cy + halfLen, z: player.pos.z };
+
+  // Cylinder body (vertical axis)
+  const ox = origin.x - player.pos.x;
+  const oz = origin.z - player.pos.z;
+  const A = dir.x * dir.x + dir.z * dir.z;
+
+  let bestT: number | null = null;
+
+  if (A > 1e-8) {
+    const B = 2 * (ox * dir.x + oz * dir.z);
+    const C = ox * ox + oz * oz - r * r;
+    const disc = B * B - 4 * A * C;
+    if (disc >= 0) {
+      const t = (-B - Math.sqrt(disc)) / (2 * A);
+      if (t >= 0) {
+        const y = origin.y + dir.y * t;
+        if (y >= a.y && y <= b.y) {
+          bestT = t;
+        }
+      }
+    }
+  } else if (ox * ox + oz * oz <= r * r) {
+    // Ray parallel to and inside cylinder; check slab.
+    const t1 = (a.y - origin.y) / dir.y;
+    const t2 = (b.y - origin.y) / dir.y;
+    const tmin = Math.min(t1, t2);
+    if (tmin >= 0) bestT = tmin;
+  }
+
+  // Spherical caps
+  const raycastSphere = (center: Vec3): number | null => {
+    const co = { x: origin.x - center.x, y: origin.y - center.y, z: origin.z - center.z };
+    const b2 = dir.x * co.x + dir.y * co.y + dir.z * co.z;
+    const c2 = co.x * co.x + co.y * co.y + co.z * co.z - r * r;
+    const disc = b2 * b2 - c2;
+    if (disc < 0) return null;
+    const t = -b2 - Math.sqrt(disc);
+    return t >= 0 ? t : null;
+  };
+
+  const bottom = raycastSphere(a);
+  const top = raycastSphere(b);
+
+  for (const t of [bottom, top]) {
+    if (t !== null && (bestT === null || t < bestT)) {
+      bestT = t;
+    }
+  }
+
+  return bestT;
+}
+
 export function raycastPlayers(
   origin: Vec3,
   dir: Vec3,
   maxDist: number,
   excludeId: string,
   players: PlayerState[],
-): { player: PlayerState; t: number } | null {
-  let best: { player: PlayerState; t: number } | null = null;
-  for (const p of players) {
-    if (p.id === excludeId || p.dead) continue;
-    const t = rayIntersectAABB(origin, dir, playerAABB(p));
-    if (t !== null && t <= maxDist && (best === null || t < best.t)) {
-      best = { player: p, t };
+): { t: number; player: PlayerState } | null {
+  let best: { t: number; player: PlayerState } | null = null;
+  for (const player of players) {
+    if (player.id === excludeId || player.dead) continue;
+    const hit = raycastCapsule(origin, dir, player);
+    if (hit !== null && hit <= maxDist && (!best || hit < best.t)) {
+      best = { t: hit, player };
     }
   }
   return best;
 }
 
-export function aimTargetPoint(p: PlayerState, maxDist: number, players: PlayerState[] = []): Vec3 {
+export function raycastTrainingTarget(
+  origin: Vec3,
+  dir: Vec3,
+  maxDist: number,
+  target: { pos: Vec3; radius: number; normal: Vec3; ringDamage: number[] },
+): { t: number; point: Vec3; ring: number } | null {
+  const denom = dir.x * target.normal.x + dir.y * target.normal.y + dir.z * target.normal.z;
+  if (Math.abs(denom) < 0.0001) return null;
+  const oc = {
+    x: target.pos.x - origin.x,
+    y: target.pos.y - origin.y,
+    z: target.pos.z - origin.z,
+  };
+  const t = (oc.x * target.normal.x + oc.y * target.normal.y + oc.z * target.normal.z) / denom;
+  if (t < 0 || t > maxDist) return null;
+  const point = pointOnRay(origin, dir, t);
+  const dist = Math.hypot(point.x - target.pos.x, point.y - target.pos.y, point.z - target.pos.z);
+  if (dist > target.radius) return null;
+  const ringCount = target.ringDamage.length;
+  const ringWidth = target.radius / ringCount;
+  const ring = Math.min(ringCount - 1, Math.floor(dist / ringWidth));
+  return { t, point, ring };
+}
+
+export function raycastBalloon(
+  origin: Vec3,
+  dir: Vec3,
+  maxDist: number,
+  balloon: { pos: Vec3; radius: number },
+): { t: number; point: Vec3 } | null {
+  const oc = {
+    x: origin.x - balloon.pos.x,
+    y: origin.y - balloon.pos.y,
+    z: origin.z - balloon.pos.z,
+  };
+  const b = dir.x * oc.x + dir.y * oc.y + dir.z * oc.z;
+  const c = oc.x * oc.x + oc.y * oc.y + oc.z * oc.z - balloon.radius * balloon.radius;
+  const disc = b * b - c;
+  if (disc < 0) return null;
+  const t = -b - Math.sqrt(disc);
+  if (t < 0 || t > maxDist) return null;
+  return { t, point: pointOnRay(origin, dir, t) };
+}
+
+export function aimTargetPoint(
+  p: PlayerState,
+  maxDist: number,
+  players: PlayerState[] = [],
+  level?: LevelDefinition,
+): Vec3 {
   const eye = eyePosition(p);
   const look = lookDirection(p);
-  const levelHit = raycastLevel(eye, look, maxDist);
+  const levelHit = raycastLevel(eye, look, maxDist, level);
   const playerHit = raycastPlayers(eye, look, maxDist, p.id, players);
 
   let t = maxDist;
@@ -375,14 +533,14 @@ function intersectAABB(a: { min: Vec3; max: Vec3 }, b: { min: Vec3; max: Vec3 })
   );
 }
 
-function isOnLadder(p: PlayerState): boolean {
+function isOnLadder(p: PlayerState, level?: LevelDefinition): boolean {
   const box = playerAABB(p);
-  return LADDERS.some((ladder) => intersectAABB(box, ladder));
+  return resolveLevel(level).ladders.some((ladder) => intersectAABB(box, ladder));
 }
 
-function clampToLadder(p: PlayerState): void {
+function clampToLadder(p: PlayerState, level?: LevelDefinition): void {
   const box = playerAABB(p);
-  for (const ladder of LADDERS) {
+  for (const ladder of resolveLevel(level).ladders) {
     if (!intersectAABB(box, ladder)) continue;
     p.pos.x = Math.max(
       ladder.min.x + PLAYER_RADIUS,
@@ -458,11 +616,12 @@ export function applyInput(p: PlayerState, input: PlayerInput): void {
 /**
  * Single physics step for one player against the level.
  */
-export function stepPlayer(p: PlayerState, dt: number): void {
+export function stepPlayer(p: PlayerState, dt: number, level?: LevelDefinition): void {
+  const resolvedLevel = resolveLevel(level);
   const wasGrounded = p.grounded;
   p.grounded = false;
   p.platformVel = { x: 0, y: 0, z: 0 };
-  if (!isOnLadder(p)) p.vel.y -= GRAVITY * dt;
+  if (!isOnLadder(p, resolvedLevel)) p.vel.y -= GRAVITY * dt;
 
   // Apply friction
   const friction = wasGrounded ? GROUND_FRICTION : AIR_FRICTION;
@@ -471,28 +630,33 @@ export function stepPlayer(p: PlayerState, dt: number): void {
 
   // Integrate position axis by axis with collision resolution
   p.pos.x += p.vel.x * dt;
-  resolveAxis(p, "x", wasGrounded);
+  resolveAxis(p, "x", wasGrounded, resolvedLevel);
 
   p.pos.y += p.vel.y * dt;
-  resolveAxis(p, "y", wasGrounded);
-  resolveMovingPlatforms(p, performance.now(), dt);
+  resolveAxis(p, "y", wasGrounded, resolvedLevel);
+  resolveMovingPlatforms(p, performance.now(), dt, resolvedLevel);
 
   p.pos.z += p.vel.z * dt;
-  resolveAxis(p, "z", wasGrounded);
+  resolveAxis(p, "z", wasGrounded, resolvedLevel);
 
-  clampToLadder(p);
-  applyJumpPads(p);
+  clampToLadder(p, resolvedLevel);
+  applyJumpPads(p, resolvedLevel);
 
-  if (p.pos.y < FALL_OUT_Y) {
-    p.pos.y = SPAWN_POINTS[0].y;
+  if (p.pos.y < getDerivedLevelData(resolvedLevel).fallOutY) {
+    p.pos.y = resolvedLevel.spawnPoints[0].y;
     p.vel.y = 0;
-    p.pos.x = SPAWN_POINTS[0].x;
-    p.pos.z = SPAWN_POINTS[0].z;
+    p.pos.x = resolvedLevel.spawnPoints[0].x;
+    p.pos.z = resolvedLevel.spawnPoints[0].z;
   }
 }
 
-function resolveMovingPlatforms(p: PlayerState, timeMs: number, dt: number): void {
-  for (const platform of MOVING_PLATFORMS) {
+function resolveMovingPlatforms(
+  p: PlayerState,
+  timeMs: number,
+  dt: number,
+  level?: LevelDefinition,
+): void {
+  for (const platform of resolveLevel(level).movingPlatforms) {
     const pos = movingPlatformPosition(platform, timeMs);
     const prevPos = movingPlatformPosition(platform, timeMs - dt * 1000);
     const delta = {
@@ -525,10 +689,10 @@ function resolveMovingPlatforms(p: PlayerState, timeMs: number, dt: number): voi
   }
 }
 
-function applyJumpPads(p: PlayerState): void {
+function applyJumpPads(p: PlayerState, level?: LevelDefinition): void {
   if (p.dead || p.vel.y > 2) return;
   const playerBox = playerAABB(p);
-  for (const pad of JUMP_PADS) {
+  for (const pad of resolveLevel(level).jumpPads) {
     if (!intersectAABB(playerBox, pad)) continue;
     p.vel.y = pad.force;
     p.grounded = false;
@@ -537,33 +701,47 @@ function applyJumpPads(p: PlayerState): void {
   }
 }
 
-function tryStepUp(p: PlayerState, wasGrounded: boolean): boolean {
+function tryStepUp(
+  p: PlayerState,
+  wasGrounded: boolean,
+  hits: { min: Vec3; max: Vec3; color?: number }[],
+  level?: LevelDefinition,
+): boolean {
   if (!wasGrounded) return false;
   const maxStep = SETTINGS.player.maxStepHeight;
   const originalY = p.pos.y;
-  p.pos.y += maxStep;
-  const steppedBox = playerAABB(p);
+  const colliders = getDerivedLevelData(level).colliders;
 
-  for (const box of LEVEL_COLLIDERS) {
-    if (intersectAABB(steppedBox, box)) {
-      p.pos.y = originalY;
-      return false;
+  for (const hit of hits) {
+    const stepHeight = hit.max.y - originalY;
+    if (stepHeight <= 0.05 || stepHeight > maxStep) continue;
+    p.pos.y = hit.max.y + 0.001;
+    const steppedBox = playerAABB(p);
+    if (colliders.every((box) => !intersectAABB(steppedBox, box))) {
+      p.grounded = true;
+      p.vel.y = 0;
+      return true;
     }
   }
 
-  p.grounded = true;
-  p.vel.y = 0;
-  return true;
+  p.pos.y = originalY;
+  return false;
 }
 
-function resolveAxis(p: PlayerState, axis: "x" | "y" | "z", wasGrounded: boolean): void {
+function resolveAxis(
+  p: PlayerState,
+  axis: "x" | "y" | "z",
+  wasGrounded: boolean,
+  level?: LevelDefinition,
+): void {
+  const colliders = getDerivedLevelData(level).colliders;
   if (axis !== "y") {
     const playerBox = playerAABB(p);
-    const hits = LEVEL_COLLIDERS.filter((box) => intersectAABB(playerBox, box));
-    if (hits.length > 0 && tryStepUp(p, wasGrounded)) return;
+    const hits = colliders.filter((box) => intersectAABB(playerBox, box));
+    if (hits.length > 0 && tryStepUp(p, wasGrounded, hits, level)) return;
   }
 
-  for (const box of LEVEL_COLLIDERS) {
+  for (const box of colliders) {
     const playerBox = playerAABB(p);
     if (!intersectAABB(playerBox, box)) continue;
 

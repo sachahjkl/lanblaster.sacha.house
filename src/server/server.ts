@@ -1,4 +1,5 @@
 import {
+  Balloon,
   ClientMsg,
   ClientStateUpdate,
   FireEvent,
@@ -9,21 +10,24 @@ import {
   SNAPSHOOT_RATE,
   TICK_DT,
   TICK_RATE,
+  TrainingTarget,
+  Vec3,
   WEAPONS,
   clonePlayerState,
   getWeapon,
 } from "../shared/protocol.ts";
-import { PICKUP_SPAWNS } from "../shared/mapData.ts";
+import { DEFAULT_LEVEL_ID, LevelDefinition, getLevelData } from "../shared/mapData.ts";
 import {
   createPlayer,
-  aimTargetPoint,
   applySpread,
-  currentSpread,
-  directionTo,
+  currentSpreadForPlayer,
+  lookDirection,
   muzzlePosition,
   pointOnRay,
+  raycastBalloon,
   raycastLevel,
   raycastPlayers,
+  raycastTrainingTarget,
   resetPlayer,
   updateSpreadAccum,
 } from "../shared/physics.ts";
@@ -53,19 +57,22 @@ interface Client {
 interface Room {
   id: string;
   name: string;
+  levelId: string;
+  level: LevelDefinition;
   password: string | undefined;
   hostId: string;
   maxPlayers: number;
   clients: Map<string, Client>;
   pickups: PickupState[];
+  balloons: Balloon[];
   emptySince: number | undefined;
 }
 
 const rooms = new Map<string, Room>();
 let serverTick = 0;
 
-function makePickups(): PickupState[] {
-  return PICKUP_SPAWNS.map((spawn) => ({
+function makePickups(level: LevelDefinition): PickupState[] {
+  return level.pickupSpawns.map((spawn) => ({
     ...spawn,
     pos: { ...spawn.pos },
     active: true,
@@ -107,6 +114,11 @@ function send(client: Client, msg: ServerMsg) {
   if (client.socket.readyState === WebSocket.OPEN) {
     client.socket.send(JSON.stringify(msg));
   }
+}
+
+function emitRoomEvent(room: Room, text: string) {
+  console.log(`[room:${room.name}] ${text}`);
+  broadcast(room, { type: "room_event", text });
 }
 
 function allPlayerStates(room: Room): PlayerState[] {
@@ -195,12 +207,12 @@ function applyClientState(client: Client, update: ClientStateUpdate) {
 
   const dtTicks = Math.max(0, serverTick - p.lastSpreadUpdateTick);
   p.lastSpreadUpdateTick = serverTick;
-  p.spreadAccumMs = updateSpreadAccum(weapon, p.spreadAccumMs, dtTicks * TICK_DT, update.fire);
-
   if (update.fire) {
     const events = tryFire(room, client, serverTick);
     for (const event of events) broadcast(room, { type: "fire", event });
   }
+
+  p.spreadAccumMs = updateSpreadAccum(weapon, p.spreadAccumMs, dtTicks * TICK_DT, update.fire);
 }
 
 function firePellet(
@@ -209,23 +221,88 @@ function firePellet(
   weapon: (typeof WEAPONS)[number],
   tick: number,
 ): FireEvent {
-  const spread = currentSpread(weapon, p.spreadAccumMs);
+  const spread = currentSpreadForPlayer(p, weapon, p.spreadAccumMs);
   const origin = muzzlePosition(p, spread);
-  const aimPoint = aimTargetPoint(p, FIRE_MAX_DIST, allPlayerStates(room));
-  const dir = applySpread(directionTo(origin, aimPoint), spread);
-  const levelHit = raycastLevel(origin, dir, FIRE_MAX_DIST);
+  const dir = applySpread(lookDirection(p), spread);
+  const levelHit = raycastLevel(origin, dir, FIRE_MAX_DIST, room.level);
   const playerHit = raycastPlayers(origin, dir, FIRE_MAX_DIST, p.id, allPlayerStates(room));
 
+  let bestTargetHit: {
+    target: TrainingTarget;
+    t: number;
+    point: Vec3;
+    ring: number;
+  } | null = null;
+  for (const target of room.level.trainingTargets) {
+    const hit = raycastTrainingTarget(origin, dir, FIRE_MAX_DIST, target);
+    if (hit && (!bestTargetHit || hit.t < bestTargetHit.t)) {
+      bestTargetHit = { target, ...hit };
+    }
+  }
+
+  let bestBalloonHit: { balloon: Balloon; t: number; point: Vec3 } | null = null;
+  for (const balloon of room.balloons) {
+    if (!balloon.active) continue;
+    const hit = raycastBalloon(origin, dir, FIRE_MAX_DIST, balloon);
+    if (hit && (!bestBalloonHit || hit.t < bestBalloonHit.t)) {
+      bestBalloonHit = { balloon, ...hit };
+    }
+  }
+
+  let closestT = Infinity;
+  let hitType: "player" | "target" | "balloon" | "level" | null = null;
+  let hitData: unknown = null;
+
+  if (playerHit && playerHit.t < closestT && (levelHit === null || playerHit.t < levelHit)) {
+    closestT = playerHit.t;
+    hitType = "player";
+    hitData = playerHit;
+  }
+  if (
+    bestTargetHit &&
+    bestTargetHit.t < closestT &&
+    (levelHit === null || bestTargetHit.t < levelHit)
+  ) {
+    closestT = bestTargetHit.t;
+    hitType = "target";
+    hitData = bestTargetHit;
+  }
+  if (
+    bestBalloonHit &&
+    bestBalloonHit.t < closestT &&
+    (levelHit === null || bestBalloonHit.t < levelHit)
+  ) {
+    closestT = bestBalloonHit.t;
+    hitType = "balloon";
+    hitData = bestBalloonHit;
+  }
+  if (levelHit !== null && levelHit < closestT) {
+    closestT = levelHit;
+    hitType = "level";
+  }
+
   let hitPlayerId: string | undefined;
-  let hitPos: { x: number; y: number; z: number } | undefined;
+  let hitPos: Vec3 | undefined;
 
-  if (playerHit && (levelHit === null || playerHit.t < levelHit)) {
-    hitPlayerId = playerHit.player.id;
-    hitPos = pointOnRay(origin, dir, playerHit.t);
-
-    const victim = playerHit.player;
-    victim.hp -= weapon.damage;
-    broadcast(room, { type: "hit", victimId: victim.id, damage: weapon.damage, hp: victim.hp });
+  if (hitType === "player") {
+    const { player: victim, t } = hitData as { t: number; player: PlayerState };
+    const point = pointOnRay(origin, dir, t);
+    hitPlayerId = victim.id;
+    hitPos = point;
+    const dist = Math.hypot(point.x - origin.x, point.y - origin.y, point.z - origin.z);
+    const damage = Math.max(
+      1,
+      Math.round(weapon.damage * playerDistanceDamageMultiplier(dist, weapon)),
+    );
+    victim.hp -= damage;
+    broadcast(room, {
+      type: "hit",
+      victimId: victim.id,
+      shooterId: p.id,
+      damage,
+      hp: victim.hp,
+      pos: point,
+    });
 
     if (victim.hp <= 0 && !victim.dead) {
       victim.dead = true;
@@ -235,9 +312,51 @@ function firePellet(
       p.score = p.kills - p.deaths;
       victim.score = victim.kills - victim.deaths;
       console.log(`[death] ${victim.name} killed by ${p.name} with ${weapon.name}`);
+      broadcast(room, {
+        type: "death",
+        victimId: victim.id,
+        killerId: p.id,
+        weaponId: weapon.id,
+      });
+      emitRoomEvent(room, `${victim.name} was fragged by ${p.name} (${weapon.name})`);
     }
-  } else if (levelHit !== null) {
-    hitPos = pointOnRay(origin, dir, levelHit);
+  } else if (hitType === "target") {
+    const { target, point, ring } = hitData as {
+      target: TrainingTarget;
+      t: number;
+      point: Vec3;
+      ring: number;
+    };
+    hitPos = point;
+    const dist = Math.hypot(point.x - origin.x, point.y - origin.y, point.z - origin.z);
+    const damage = Math.max(
+      1,
+      Math.round(weapon.damage * target.ringDamage[ring] * targetDistanceDamageMultiplier(dist)),
+    );
+    broadcast(room, {
+      type: "hit",
+      victimId: target.id,
+      shooterId: p.id,
+      damage,
+      hp: 0,
+      pos: point,
+      crit: ring === 0,
+    });
+  } else if (hitType === "balloon") {
+    const { balloon, point } = hitData as { balloon: Balloon; t: number; point: Vec3 };
+    hitPos = point;
+    balloon.active = false;
+    broadcast(room, {
+      type: "hit",
+      victimId: balloon.id,
+      shooterId: p.id,
+      damage: 25,
+      hp: 0,
+      pos: point,
+      crit: true,
+    });
+  } else if (hitType === "level") {
+    hitPos = pointOnRay(origin, dir, levelHit as number);
   }
 
   return {
@@ -275,6 +394,7 @@ function broadcastRoomInfo(room: Room) {
     type: "room_info",
     roomId: room.id,
     name: room.name,
+    levelId: room.levelId,
     hasPassword: !!room.password,
     hostId: room.hostId,
   };
@@ -303,6 +423,7 @@ function removeClient(id: string) {
     console.log(
       `[leave] ${clientLabel(client)} left room "${room.name}" (${room.clients.size}/${room.maxPlayers} remaining)`,
     );
+    emitRoomEvent(room, `${client.state.name} left the room`);
     if (room.clients.size === 0) {
       room.emptySince = Date.now();
     } else if (room.hostId === id) {
@@ -314,6 +435,7 @@ function removeClient(id: string) {
 
 function createRoom(
   name: string | undefined,
+  levelId: string | undefined,
   password: string | undefined,
   maxPlayers: number,
 ): Room | { error: string } {
@@ -329,15 +451,19 @@ function createRoom(
       return { error: "Maximum number of 32-player rooms reached" };
     }
   }
+  const level = getLevelData(levelId ?? DEFAULT_LEVEL_ID);
   const id = crypto.randomUUID();
   const room: Room = {
     id,
     name: sanitizeRoomName(name ?? null) || `Room ${rooms.size + 1}`,
+    levelId: level.id,
+    level,
     password: password && password.length > 0 ? password : undefined,
     hostId: "",
     maxPlayers: safeMax,
     clients: new Map(),
-    pickups: makePickups(),
+    pickups: makePickups(level),
+    balloons: [],
     emptySince: undefined,
   };
   rooms.set(id, room);
@@ -366,7 +492,78 @@ function joinRoom(
   console.log(
     `[join] ${clientLabel(client)} joined "${room.name}" (${room.clients.size}/${room.maxPlayers})`,
   );
+  emitRoomEvent(room, `${client.state.name} joined the room`);
   return { ok: true };
+}
+
+function handleRespawnRequest(client: Client) {
+  const room = rooms.get(client.roomId);
+  if (!room || !client.state.dead) return;
+  resetPlayer(client.state, room.level, client.spawnIndex);
+  emitRoomEvent(room, `${client.state.name} respawned`);
+}
+
+function spawnBalloons(room: Room) {
+  if (room.level.balloonSpawns.length === 0) return;
+  for (let i = 0; i < room.level.balloonSpawns.length; i++) {
+    const spawn = room.level.balloonSpawns[i];
+    room.balloons.push({
+      id: `balloon-${serverTick}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+      pos: {
+        x: spawn.x + (Math.random() - 0.5) * 16,
+        y: spawn.y,
+        z: spawn.z + (Math.random() - 0.5) * 16,
+      },
+      radius: 0.4,
+      active: true,
+    });
+  }
+  emitRoomEvent(room, "Balloons released");
+}
+
+function updateBalloons(room: Room) {
+  for (const balloon of room.balloons) {
+    if (!balloon.active) continue;
+    balloon.pos.y += 0.012;
+    balloon.pos.x += Math.sin(serverTick * 0.02 + balloon.pos.y) * 0.002;
+    if (balloon.pos.y > 16) balloon.active = false;
+  }
+  // Prune popped/floated-away balloons to keep snapshot small.
+  if (room.balloons.length > 64) {
+    room.balloons = room.balloons.filter((b) => b.active);
+  }
+}
+
+function handleSpawnBalloons(client: Client) {
+  const room = rooms.get(client.roomId);
+  if (!room) return;
+  spawnBalloons(room);
+}
+
+function sanitizeChat(value: string): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, 128);
+}
+
+function targetDistanceDamageMultiplier(distance: number): number {
+  return Math.min(2.5, 1 + distance / 150);
+}
+
+function playerDistanceDamageMultiplier(distance: number, weapon: WeaponConfig): number {
+  if (!weapon.damageFalloffEnd) return 1;
+  const start = weapon.damageFalloffStart ?? 0;
+  if (distance <= start) return 1;
+  const end = weapon.damageFalloffEnd;
+  const min = weapon.damageFalloffMin ?? 0.5;
+  if (distance >= end) return min;
+  return 1 - ((distance - start) / (end - start)) * (1 - min);
+}
+
+function handleChat(client: Client, msg: Extract<ClientMsg, { type: "chat" }>) {
+  const room = rooms.get(client.roomId);
+  if (!room || client.state.dead) return;
+  const text = sanitizeChat(msg.text);
+  if (!text) return;
+  emitRoomEvent(room, `${client.state.name}: ${text}`);
 }
 
 function handleRoomUpdate(client: Client, msg: Extract<ClientMsg, { type: "room_update" }>) {
@@ -408,7 +605,8 @@ function gameLoop() {
 
     for (const client of room.clients.values()) {
       if (client.state.dead && serverTick >= client.state.respawnTick) {
-        resetPlayer(client.state, client.spawnIndex);
+        resetPlayer(client.state, room.level, client.spawnIndex);
+        emitRoomEvent(room, `${client.state.name} auto-respawned`);
       }
       if (client.state.reloadEndTick > 0 && serverTick >= client.state.reloadEndTick) {
         client.state.ammo = getWeapon(client.state.weaponId).maxAmmo;
@@ -417,6 +615,7 @@ function gameLoop() {
     }
 
     updatePickups(room);
+    updateBalloons(room);
 
     if (serverTick % SNAPSHOT_EVERY === 0) {
       const snapshot: Snapshot = {
@@ -424,6 +623,7 @@ function gameLoop() {
         serverTime: performance.now(),
         players: [...room.clients.values()].map((client) => clonePlayerState(client.state)),
         pickups: room.pickups.map((pickup) => ({ ...pickup, pos: { ...pickup.pos } })),
+        balloons: room.balloons.map((balloon) => ({ ...balloon, pos: { ...balloon.pos } })),
       };
       broadcast(room, { type: "snapshot", snapshot });
     }
@@ -443,6 +643,12 @@ function handleClientMessage(client: Client, data: string) {
       });
     } else if (msg.type === "room_update") {
       handleRoomUpdate(client, msg);
+    } else if (msg.type === "respawn") {
+      handleRespawnRequest(client);
+    } else if (msg.type === "chat") {
+      handleChat(client, msg);
+    } else if (msg.type === "spawn_balloons") {
+      handleSpawnBalloons(client);
     }
   } catch {
     // Ignore malformed messages
@@ -456,6 +662,8 @@ Deno.serve({ hostname: HOST, port: PORT }, (req) => {
     const list = [...rooms.values()].map((room) => ({
       id: room.id,
       name: room.name,
+      levelId: room.levelId,
+      levelName: room.level.name,
       playerCount: room.clients.size,
       maxPlayers: room.maxPlayers,
       hasPassword: !!room.password,
@@ -478,11 +686,12 @@ Deno.serve({ hostname: HOST, port: PORT }, (req) => {
     const password = url.searchParams.get("password");
     const desiredMax = Number(url.searchParams.get("maxPlayers") ?? DEFAULT_MAX_PLAYERS);
     const desiredRoomName = url.searchParams.get("roomName");
+    const desiredLevelId = url.searchParams.get("levelId");
 
     const client: Client = {
       id,
       socket,
-      state: createPlayer(id, 0),
+      state: createPlayer(id),
       spawnIndex: 0,
       roomId: "",
     };
@@ -499,7 +708,12 @@ Deno.serve({ hostname: HOST, port: PORT }, (req) => {
         return response;
       }
     } else {
-      const created = createRoom(desiredRoomName ?? undefined, password ?? undefined, desiredMax);
+      const created = createRoom(
+        desiredRoomName ?? undefined,
+        desiredLevelId ?? undefined,
+        password ?? undefined,
+        desiredMax,
+      );
       if ("error" in created) {
         socket.onopen = () => {
           send(client, { type: "error", message: created.error });
@@ -509,7 +723,7 @@ Deno.serve({ hostname: HOST, port: PORT }, (req) => {
       }
       room = created;
       console.log(
-        `[room] ${clientLabel(client)} created "${room.name}" (${room.id}) max=${room.maxPlayers}`,
+        `[room] ${clientLabel(client)} created "${room.name}" [${room.level.name}] (${room.id}) max=${room.maxPlayers}`,
       );
     }
 
@@ -529,7 +743,8 @@ Deno.serve({ hostname: HOST, port: PORT }, (req) => {
 
     client.roomId = room.id;
     client.spawnIndex = chooseSpawnIndex(room);
-    client.state.pos = { ...client.state.pos }; // ensure fresh pos reference
+    resetPlayer(client.state, room.level, client.spawnIndex);
+    client.state.name = name;
 
     socket.onopen = () => {
       send(client, {
@@ -538,6 +753,7 @@ Deno.serve({ hostname: HOST, port: PORT }, (req) => {
         tick: serverTick,
         roomId: room!.id,
         roomName: room!.name,
+        levelId: room!.levelId,
         isHost: room!.hostId === id,
       });
       broadcastRoomInfo(room!);
