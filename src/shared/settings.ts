@@ -20,16 +20,17 @@ export const SETTINGS = {
     crouchSpeedMultiplier: 0.55,
     groundFriction: 0.85,
     airFriction: 0.98,
+    maxStepHeight: 0.95,
   },
   combat: {
     respawnMs: 3000,
     fireMaxDistance: 200,
   },
   weaponVisuals: {
-    handHeight: 1.08,
-    rightHandOffset: 0.76,
+    handHeight: 1.02,
+    rightHandOffset: 0.48,
     forwardHandOffset: 0.702,
     muzzleForwardOffset: 0.55,
-    muzzleUpOffset: 0.08,
+    muzzleUpOffset: 0.02,
   },
 } as const;

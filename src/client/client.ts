@@ -2,7 +2,6 @@ import {
   ClientMsg,
   ClientStateUpdate,
   FireEvent,
-  JUMP_PADS,
   PlayerInput,
   PlayerState,
   ServerMsg,
@@ -15,12 +14,18 @@ import {
   clonePlayerState,
   getWeapon,
 } from "../shared/protocol.ts";
+import { JUMP_PADS } from "../shared/mapData.ts";
 import {
   aimTargetPoint,
   applyInput,
+  applySpread,
   createPlayer,
+  currentSpread,
+  directionTo,
   muzzlePosition,
+  pointOnRay,
   stepPlayer,
+  updateSpreadAccum,
 } from "../shared/physics.ts";
 import { SETTINGS } from "../shared/settings.ts";
 import { AudioManager } from "./audio.ts";
@@ -80,11 +85,15 @@ class GameClient {
   localState: PlayerState = createPlayer("local");
   previousLocalState: PlayerState = clonePlayerState(this.localState);
   lastSimulationTime = performance.now();
+  roomId = "";
+  roomName = "";
+  isHost = false;
 
   inputSeq = 0;
   localLastFireSeq = -9999;
   pendingFire = false;
   pendingReload = false;
+  localReloadEndMs = 0;
 
   snapshots: SnapshotEntry[] = [];
   remoteVisualStates = new Map<string, PlayerState>();
@@ -94,6 +103,8 @@ class GameClient {
   hudHpFill = document.getElementById("hp-fill") as HTMLDivElement;
   hudHpText = document.getElementById("hp-text") as HTMLDivElement;
   pickupToast = document.getElementById("pickup-toast") as HTMLDivElement;
+  scoreboard = document.getElementById("scoreboard") as HTMLDivElement;
+  scoreboardBody = document.getElementById("scoreboard-body") as HTMLTableSectionElement;
 
   lastRenderTime = performance.now();
   ping = 50;
@@ -162,6 +173,16 @@ class GameClient {
     }
   }
 
+  disconnect() {
+    this.stop();
+    try {
+      this.ws?.close(1000, "Left room");
+    } catch {
+      // ignore
+    }
+    this.ws = null;
+  }
+
   async checkServerHealth() {
     try {
       const response = await fetch("/health", { cache: "no-store" });
@@ -192,8 +213,24 @@ class GameClient {
     this.localId = msg.id;
     this.localState.id = msg.id;
     this.localState.name = this.playerName;
+    this.roomId = msg.roomId;
+    this.roomName = msg.roomName;
+    this.isHost = msg.isHost;
     this.renderer.setLocalPlayer(msg.id);
-    console.log("Local id", msg.id);
+    this.updateRoomSettingsUI();
+    console.log("Local id", msg.id, "room", msg.roomId);
+  }
+
+  updateRoomSettingsUI() {
+    const roomSettings = document.getElementById("room-settings") as HTMLDivElement | null;
+    if (roomSettings) roomSettings.hidden = !this.isHost;
+    const roomNameInput = document.getElementById("room-name-input") as HTMLInputElement | null;
+    if (roomNameInput) roomNameInput.value = this.roomName;
+  }
+
+  sendRoomUpdate(name?: string, password?: string, maxPlayers?: number) {
+    if (!this.isHost) return;
+    this.send({ type: "room_update", name, password, maxPlayers });
   }
 
   onMessage(data: string) {
@@ -205,6 +242,7 @@ class GameClient {
       if (this.snapshots.length > MAX_SNAPSHOT_HISTORY) this.snapshots.shift();
       this.renderer.updatePickups(msg.snapshot.pickups);
       this.applyAuthoritativeNonMovementState(msg.snapshot);
+      this.updateScoreboard(msg.snapshot);
     } else if (msg.type === "fire") {
       this.onFireEvent(msg.event);
     } else if (msg.type === "hit") {
@@ -214,6 +252,10 @@ class GameClient {
       }
     } else if (msg.type === "pong") {
       this.ping = (performance.now() - msg.clientTime) * 0.5;
+    } else if (msg.type === "room_info") {
+      this.roomName = msg.name;
+      this.isHost = msg.hostId === this.localId;
+      this.updateRoomSettingsUI();
     } else if (msg.type === "pickup") {
       this.pickupToast.textContent = `Picked up ${msg.label}`;
       this.pickupToastUntil = performance.now() + 1800;
@@ -298,9 +340,26 @@ class GameClient {
     if (desiredWeapon.id !== this.localState.weaponId) {
       this.localState.weaponId = desiredWeapon.id;
       this.localState.ammo = desiredWeapon.maxAmmo;
+      this.localState.spreadAccumMs = 0;
+      this.localState.reloadEndTick = 0;
+      this.localReloadEndMs = 0;
     }
-    if (input.reload) {
-      this.localState.ammo = desiredWeapon.maxAmmo;
+    const weapon = getWeapon(this.localState.weaponId);
+    const reloadDurationTicks = Math.max(1, Math.ceil((weapon.reloadMs / 1000) * TICK_RATE));
+
+    if (this.localState.reloadEndTick > 0 && input.seq >= this.localState.reloadEndTick) {
+      this.localState.ammo = weapon.maxAmmo;
+      this.localState.reloadEndTick = 0;
+      this.localReloadEndMs = 0;
+    }
+    if (
+      input.reload &&
+      this.localState.reloadEndTick === 0 &&
+      this.localState.ammo < weapon.maxAmmo
+    ) {
+      this.localState.reloadEndTick = input.seq + reloadDurationTicks;
+      this.localReloadEndMs = performance.now() + weapon.reloadMs;
+      this.audio.playReload();
     }
 
     applyInput(this.localState, input);
@@ -311,16 +370,33 @@ class GameClient {
       this.lastJumpPadSeq = this.localState.jumpPadSeq;
     }
 
-    if (input.fire && !this.localState.dead && this.localState.ammo > 0) {
-      const weapon = getWeapon(this.localState.weaponId);
+    this.localState.spreadAccumMs = updateSpreadAccum(
+      weapon,
+      this.localState.spreadAccumMs,
+      TICK_DT,
+      input.fire,
+    );
+
+    if (
+      input.fire &&
+      !this.localState.dead &&
+      this.localState.ammo > 0 &&
+      this.localState.reloadEndTick === 0
+    ) {
       const cooldownTicks = Math.max(1, Math.ceil((weapon.cooldownMs / 1000) * TICK_RATE));
       if (input.seq - this.localLastFireSeq >= cooldownTicks) {
         this.localLastFireSeq = input.seq;
         this.localState.ammo--;
         this.audio.playShoot();
-        const origin = muzzlePosition(this.localState);
-        const aimPoint = aimTargetPoint(this.localState, SETTINGS.combat.fireMaxDistance);
-        this.renderer.addTracer(origin, aimPoint);
+        const spread = currentSpread(weapon, this.localState.spreadAccumMs);
+        const pellets = weapon.pelletCount ?? 1;
+        for (let i = 0; i < pellets; i++) {
+          const origin = muzzlePosition(this.localState, spread);
+          const aimPoint = aimTargetPoint(this.localState, SETTINGS.combat.fireMaxDistance);
+          const dir = applySpread(directionTo(origin, aimPoint), spread);
+          const end = pointOnRay(origin, dir, SETTINGS.combat.fireMaxDistance);
+          this.renderer.addTracer(origin, end);
+        }
       }
     }
   }
@@ -382,6 +458,31 @@ class GameClient {
     this.pickupToast.hidden = performance.now() > this.pickupToastUntil;
   }
 
+  updateScoreboard(snapshot: Snapshot) {
+    if (!this.localId) return;
+    const players = [...snapshot.players];
+    const localIndex = players.findIndex((p) => p.id === this.localId);
+    if (localIndex < 0) players.push(this.localState);
+    players.sort((a, b) => b.score - a.score || b.kills - a.kills || a.deaths - b.deaths);
+
+    this.scoreboardBody.innerHTML = "";
+    for (let i = 0; i < players.length; i++) {
+      const p = players[i];
+      const isLocal = p.id === this.localId;
+      const row = document.createElement("tr");
+      if (isLocal) row.classList.add("local");
+      row.innerHTML = `
+        <td>${i + 1}</td>
+        <td>${p.name}</td>
+        <td class="num">${p.kills}</td>
+        <td class="num">${p.deaths}</td>
+        <td class="num">${p.score}</td>
+        <td class="num">${isLocal ? Math.round(this.ping) : "-"}</td>
+      `;
+      this.scoreboardBody.appendChild(row);
+    }
+  }
+
   renderLoop(now: number) {
     if (this.stopped) return;
 
@@ -397,7 +498,17 @@ class GameClient {
       this.input.aiming,
     );
     this.renderer.updatePlayer(renderedLocalState, true);
-    this.renderer.updateFirstPersonWeapon(renderedLocalState, renderDt, this.input.aiming);
+    const weapon = getWeapon(renderedLocalState.weaponId);
+    const reloadProgress =
+      this.localReloadEndMs > 0
+        ? Math.min(1, Math.max(0, 1 - (this.localReloadEndMs - now) / weapon.reloadMs))
+        : 0;
+    this.renderer.updateFirstPersonWeapon(
+      renderedLocalState,
+      renderDt,
+      this.input.aiming,
+      reloadProgress,
+    );
     this.updateRemotePlayers(renderDt);
     this.renderer.updateMovingPlatforms(now);
     this.renderer.updateTracers(renderDt);
@@ -475,15 +586,26 @@ class GameClient {
 }
 
 const titleScreen = document.getElementById("title-screen") as HTMLDivElement;
-const nameForm = document.getElementById("name-form") as HTMLFormElement;
 const nameInput = document.getElementById("player-name") as HTMLInputElement;
 const nameError = document.getElementById("name-error") as HTMLDivElement;
-const playButton = document.getElementById("play-button") as HTMLButtonElement;
 const loadingStatus = document.getElementById("loading-status") as HTMLDivElement;
 const loadingTip = document.getElementById("loading-tip") as HTMLDivElement;
+const tabCreate = document.getElementById("tab-create") as HTMLButtonElement;
+const tabJoin = document.getElementById("tab-join") as HTMLButtonElement;
+const createPanel = document.getElementById("create-panel") as HTMLDivElement;
+const joinPanel = document.getElementById("join-panel") as HTMLDivElement;
+const createRoomName = document.getElementById("create-room-name") as HTMLInputElement;
+const autoRoomName = document.getElementById("auto-room-name") as HTMLSpanElement;
+const createRoomPassword = document.getElementById("create-room-password") as HTMLInputElement;
+const createRoomMax = document.getElementById("create-room-max") as HTMLSelectElement;
+const createRoomButton = document.getElementById("create-room-button") as HTMLButtonElement;
+const joinRoomPassword = document.getElementById("join-room-password") as HTMLInputElement;
+const roomList = document.getElementById("room-list") as HTMLDivElement;
+const joinRoomButton = document.getElementById("join-room-button") as HTMLButtonElement;
 const pauseMenu = document.getElementById("pause-menu") as HTMLDivElement;
 const optionsButton = document.getElementById("options-button") as HTMLButtonElement;
 const resumeButton = document.getElementById("resume-button") as HTMLButtonElement;
+const exitRoomButton = document.getElementById("exit-room-button") as HTMLButtonElement;
 const headSwayToggle = document.getElementById("head-sway-toggle") as HTMLInputElement;
 const masterVolumeSlider = document.getElementById("master-volume-slider") as HTMLInputElement;
 const musicToggle = document.getElementById("music-toggle") as HTMLInputElement;
@@ -493,6 +615,10 @@ const sfxVolumeSlider = document.getElementById("sfx-volume-slider") as HTMLInpu
 const shadowsToggle = document.getElementById("shadows-toggle") as HTMLInputElement;
 const brightnessSlider = document.getElementById("brightness-slider") as HTMLInputElement;
 const brightnessValue = document.getElementById("brightness-value") as HTMLSpanElement;
+const roomNameInput = document.getElementById("room-name-input") as HTMLInputElement;
+const roomPasswordInput = document.getElementById("room-password-input") as HTMLInputElement;
+const roomMaxInput = document.getElementById("room-max-input") as HTMLSelectElement;
+const applyRoomSettingsButton = document.getElementById("apply-room-settings") as HTMLButtonElement;
 
 const settings = loadSettings();
 let activeClient: GameClient | null = null;
@@ -549,12 +675,35 @@ function setPauseMenuVisible(visible: boolean) {
 }
 
 window.addEventListener("keydown", (event) => {
-  if (event.code !== "Escape" || !titleScreen.hidden) return;
-  event.preventDefault();
-  setPauseMenuVisible(pauseMenu.hidden === true);
+  if (!titleScreen.hidden) return;
+  if (event.code === "Escape") {
+    event.preventDefault();
+    setPauseMenuVisible(pauseMenu.hidden === true);
+  } else if (event.code === "KeyP") {
+    event.preventDefault();
+    if (activeClient) {
+      activeClient.scoreboard.hidden = !activeClient.scoreboard.hidden;
+    }
+  }
+});
+
+window.addEventListener("keyup", (event) => {
+  if (event.code === "KeyP" && activeClient) {
+    activeClient.scoreboard.hidden = true;
+  }
 });
 
 resumeButton.addEventListener("click", () => setPauseMenuVisible(false));
+exitRoomButton.addEventListener("click", () => {
+  activeClient?.disconnect();
+  activeClient = null;
+  setPauseMenuVisible(false);
+  titleScreen.hidden = false;
+  createRoomButton.disabled = false;
+  joinRoomButton.disabled = selectedRoomId === "";
+  clearLoading();
+  void fetchRoomList();
+});
 optionsButton.addEventListener("click", () => setPauseMenuVisible(true));
 
 headSwayToggle.addEventListener("change", () => {
@@ -597,46 +746,61 @@ brightnessSlider.addEventListener("input", () => {
   applyGraphicsSettings();
 });
 
+interface JoinOptions {
+  roomId?: string;
+  roomName?: string;
+  password?: string;
+  maxPlayers?: number;
+}
+
 function connectForJoin(
   playerName: string,
+  options: JoinOptions = {},
 ): Promise<{ ws: WebSocket; welcome: Extract<ServerMsg, { type: "welcome" }> }> {
   return new Promise((resolve, reject) => {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(
-      `${proto}//${window.location.host}?name=${encodeURIComponent(playerName)}`,
-    );
+    const params = new URLSearchParams();
+    params.set("name", playerName);
+    if (options.roomId) params.set("room", options.roomId);
+    if (options.roomName) params.set("roomName", options.roomName);
+    if (options.password) params.set("password", options.password);
+    if (options.maxPlayers) params.set("maxPlayers", String(options.maxPlayers));
+
+    const ws = new WebSocket(`${proto}//${window.location.host}?${params.toString()}`);
 
     ws.onmessage = (event) => {
       const msg = JSON.parse(event.data) as ServerMsg;
-      if (msg.type !== "welcome") return;
-      resolve({ ws, welcome: msg });
+      if (msg.type === "welcome") {
+        resolve({ ws, welcome: msg });
+      } else if (msg.type === "error") {
+        reject(new Error(msg.message));
+      }
     };
     ws.onclose = (event) => reject(new Error(event.reason || "Could not join match"));
     ws.onerror = () => reject(new Error("Could not connect to server"));
   });
 }
 
-nameForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
+async function doJoin(options: JoinOptions) {
   const playerName = nameInput.value.trim().slice(0, 24) || "Player";
   nameError.textContent = "";
-  playButton.disabled = true;
-  playButton.textContent = "Joining...";
+  createRoomButton.disabled = true;
+  joinRoomButton.disabled = true;
   setLoading("Dialing arena uplink...");
   localStorage.setItem("playerName", playerName);
 
   try {
-    const { ws, welcome } = await connectForJoin(playerName);
-    playButton.textContent = "Loading assets...";
+    const { ws, welcome } = await connectForJoin(playerName, options);
     setLoading("Loading arena assets...");
     const client = new GameClient(playerName, ws, welcome, settings, (reason) => {
       activeClient = null;
       titleScreen.hidden = false;
       nameError.textContent = reason;
-      playButton.disabled = false;
-      playButton.textContent = "Join Match";
+      createRoomButton.disabled = false;
+      joinRoomButton.disabled = selectedRoomId === "";
       clearLoading();
       nameInput.focus();
+      void fetchRoomList();
     });
     await client.ready;
     activeClient = client;
@@ -646,9 +810,140 @@ nameForm.addEventListener("submit", async (event) => {
   } catch (err) {
     titleScreen.hidden = false;
     nameError.textContent = err instanceof Error ? err.message : "Could not join match";
-    playButton.disabled = false;
-    playButton.textContent = "Join Match";
+    createRoomButton.disabled = false;
+    joinRoomButton.disabled = selectedRoomId === "";
     clearLoading();
     nameInput.focus();
   }
+}
+
+let selectedRoomId = "";
+
+async function fetchRoomList() {
+  if (titleScreen.hidden) return;
+  try {
+    const res = await fetch("/rooms", { cache: "no-store" });
+    if (!res.ok) return;
+    const list = (await res.json()) as {
+      id: string;
+      name: string;
+      playerCount: number;
+      maxPlayers: number;
+      hasPassword: boolean;
+    }[];
+    renderRoomList(list);
+  } catch {
+    // ignore
+  }
+}
+
+function renderRoomList(
+  list: {
+    id: string;
+    name: string;
+    playerCount: number;
+    maxPlayers: number;
+    hasPassword: boolean;
+  }[],
+) {
+  roomList.innerHTML = "";
+  for (const room of list) {
+    const item = document.createElement("div");
+    item.className = "room-item";
+    if (room.id === selectedRoomId) item.classList.add("selected");
+    const shortId = room.id.slice(0, 6);
+    item.innerHTML = `
+      <div>
+        <strong>${room.name}</strong>
+        <span style="opacity:0.5;font-size:11px;margin-left:6px;">#${shortId}</span>
+        <div style="font-size:11px;color:#94a3b8;">${room.playerCount}/${room.maxPlayers} players</div>
+      </div>
+      <div>${room.hasPassword ? '<span class="room-item-locked">LOCKED</span>' : ""}</div>
+    `;
+    item.addEventListener("click", () => {
+      selectedRoomId = room.id;
+      joinRoomButton.disabled = false;
+      renderRoomList(list);
+    });
+    roomList.appendChild(item);
+  }
+}
+
+tabCreate.addEventListener("click", () => {
+  tabCreate.classList.add("active");
+  tabJoin.classList.remove("active");
+  createPanel.hidden = false;
+  joinPanel.hidden = true;
 });
+
+tabJoin.addEventListener("click", () => {
+  tabJoin.classList.add("active");
+  tabCreate.classList.remove("active");
+  createPanel.hidden = true;
+  joinPanel.hidden = false;
+  void fetchRoomList();
+});
+
+function generateRoomName(): string {
+  const prefixes = [
+    "Neon",
+    "Turbo",
+    "Cyber",
+    "Iron",
+    "Solar",
+    "Shadow",
+    "Rapid",
+    "Mega",
+    "Hyper",
+    "Quantum",
+  ];
+  const suffixes = [
+    "Arena",
+    "Zone",
+    "Pit",
+    "Dome",
+    "Hangar",
+    "Base",
+    "Vault",
+    "Foundry",
+    "Station",
+    "Colony",
+  ];
+  const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
+  const suffix = suffixes[Math.floor(Math.random() * suffixes.length)];
+  const num = Math.floor(Math.random() * 99) + 1;
+  return `${prefix} ${suffix} ${num}`;
+}
+
+createRoomButton.addEventListener("click", () => {
+  void doJoin({
+    roomName: createRoomName.value,
+    password: createRoomPassword.value,
+    maxPlayers: Number(createRoomMax.value),
+  });
+});
+
+autoRoomName.addEventListener("click", () => {
+  createRoomName.value = generateRoomName();
+});
+
+joinRoomButton.addEventListener("click", () => {
+  if (!selectedRoomId) return;
+  void doJoin({ roomId: selectedRoomId, password: joinRoomPassword.value });
+});
+
+applyRoomSettingsButton.addEventListener("click", () => {
+  activeClient?.sendRoomUpdate(
+    roomNameInput.value,
+    roomPasswordInput.value,
+    Number(roomMaxInput.value),
+  );
+});
+
+setInterval(() => {
+  if (!joinPanel.hidden && !titleScreen.hidden) {
+    void fetchRoomList();
+  }
+}, 3000);
+
+void fetchRoomList();

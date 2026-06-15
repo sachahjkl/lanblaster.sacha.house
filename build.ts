@@ -63,6 +63,7 @@ const files = [
   "src/shared/settings.ts",
   "src/shared/protocol.ts",
   "src/shared/physics.ts",
+  "src/shared/mapData.ts",
 ];
 
 for (const file of files) {

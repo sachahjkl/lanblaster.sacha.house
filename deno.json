@@ -3,6 +3,7 @@
     "three": "npm:three@0.160.0",
     "three/examples/jsm/": "npm:three@0.160.0/examples/jsm/",
     "three/examples/jsm/loaders/GLTFLoader.js": "npm:three@0.160.0/examples/jsm/loaders/GLTFLoader.js",
+    "three/examples/jsm/loaders/OBJLoader.js": "npm:three@0.160.0/examples/jsm/loaders/OBJLoader.js",
     "three/examples/jsm/renderers/webgpu/WebGPURenderer.js": "npm:three@0.160.0/examples/jsm/renderers/webgpu/WebGPURenderer.js",
     "three/examples/jsm/utils/SkeletonUtils.js": "npm:three@0.160.0/examples/jsm/utils/SkeletonUtils.js",
     "typescript": "npm:typescript@5.3.3"

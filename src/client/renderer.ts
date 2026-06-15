@@ -1,17 +1,16 @@
 import * as THREE from "three";
 import { GLTF, GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
+import { PickupState, PlayerState, Vec3, movingPlatformPosition } from "../shared/protocol.ts";
 import {
   DECORATIONS,
   JUMP_PADS,
   LADDERS,
   LEVEL,
+  MAP_SCALE,
   MOVING_PLATFORMS,
-  PickupState,
-  PlayerState,
-  Vec3,
-  movingPlatformPosition,
-} from "../shared/protocol.ts";
+} from "../shared/mapData.ts";
 import { SETTINGS } from "../shared/settings.ts";
 
 const OVERHEAD_UI = {
@@ -55,7 +54,6 @@ export class GameRenderer {
   renderer: THREE.WebGLRenderer;
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
-  levelGroup = new THREE.Group();
   visualMapGroup = new THREE.Group();
   players = new Map<string, THREE.Mesh>();
   weapons = new Map<string, THREE.Object3D>();
@@ -73,6 +71,7 @@ export class GameRenderer {
   headSwayAmount = 0;
   leanAmount = 0;
   aimAmount = 0;
+  crouchAmount = 0;
   playerModelRoots = new Map<string, THREE.Object3D>();
   playerAimRigs = new Map<
     string,
@@ -106,56 +105,35 @@ export class GameRenderer {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x87ceeb);
 
-    this.camera = new THREE.PerspectiveCamera(75, canvas.width / canvas.height, 0.1, 200);
+    this.camera = new THREE.PerspectiveCamera(75, canvas.width / canvas.height, 0.1, 1000);
     this.scene.add(this.camera);
 
     // Lights
     const ambient = new THREE.HemisphereLight(0xbfe9ff, 0x4b2f1c, 1.08);
     this.scene.add(ambient);
     this.keyLight = new THREE.DirectionalLight(0xfff2d0, 2.35);
-    this.keyLight.position.set(-18, 34, 14);
+    this.keyLight.position.set(-90, 180, 70);
     this.keyLight.castShadow = true;
     this.keyLight.shadow.mapSize.set(2048, 2048);
+    this.keyLight.shadow.bias = -0.0005;
+    this.keyLight.shadow.normalBias = 0.02;
     this.keyLight.shadow.camera.near = 1;
-    this.keyLight.shadow.camera.far = 120;
-    this.keyLight.shadow.camera.left = -60;
-    this.keyLight.shadow.camera.right = 60;
-    this.keyLight.shadow.camera.top = 60;
-    this.keyLight.shadow.camera.bottom = -60;
+    this.keyLight.shadow.camera.far = 500;
+    this.keyLight.shadow.camera.left = -150;
+    this.keyLight.shadow.camera.right = 150;
+    this.keyLight.shadow.camera.top = 150;
+    this.keyLight.shadow.camera.bottom = -150;
     this.scene.add(this.keyLight);
     this.fillLight = new THREE.DirectionalLight(0x9be7ff, 0.7);
-    this.fillLight.position.set(24, 10, -26);
+    this.fillLight.position.set(120, 50, -130);
     this.scene.add(this.fillLight);
-    this.accentLight = new THREE.PointLight(0xf97316, 1.35, 42);
-    this.accentLight.position.set(0, 8, 0);
+    this.accentLight = new THREE.PointLight(0xf97316, 2.5, 160);
+    this.accentLight.position.set(0, 48, 0);
     this.scene.add(this.accentLight);
 
-    // Level
-    const boxGeo = new THREE.BoxGeometry(1, 1, 1);
-    for (const box of LEVEL) {
-      const sx = box.max.x - box.min.x;
-      const sy = box.max.y - box.min.y;
-      const sz = box.max.z - box.min.z;
-      const cx = (box.min.x + box.max.x) * 0.5;
-      const cy = (box.min.y + box.max.y) * 0.5;
-      const cz = (box.min.z + box.max.z) * 0.5;
+    this.scene.fog = new THREE.Fog(0x87ceeb, 120, 360);
 
-      const mat = new THREE.MeshStandardMaterial({
-        color: box.color ?? 0x888888,
-        roughness: 0.8,
-        transparent: true,
-        opacity: 0.45,
-      });
-      const mesh = new THREE.Mesh(boxGeo, mat);
-      mesh.position.set(cx, cy, cz);
-      mesh.scale.set(sx, sy, sz);
-      mesh.receiveShadow = true;
-      this.levelGroup.add(mesh);
-    }
-    this.levelGroup.visible = false; // physics-only; visualMapGroup mirrors actual colliders
-    this.scene.add(this.levelGroup);
-    this.addVisualGround();
-    this.buildDustLikeVisualMap();
+    // Visual level is loaded from the OBJ; physics uses LEVEL directly.
     this.addJumpPadVisuals();
     this.addMovingPlatformVisuals();
     this.addLadderVisuals();
@@ -173,6 +151,7 @@ export class GameRenderer {
       this.loadSkybox(),
       this.loadEnvironmentTextures(),
       this.loadAssets(),
+      this.loadObjMap(),
     ]).then(() => undefined);
   }
 
@@ -277,11 +256,37 @@ export class GameRenderer {
     return new THREE.MeshStandardMaterial({ map: texture, roughness: 0.9 });
   }
 
+  createNoiseTexture(size = 256): THREE.CanvasTexture {
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = "#808080";
+    ctx.fillRect(0, 0, size, size);
+    const img = ctx.getImageData(0, 0, size, size);
+    for (let i = 0; i < img.data.length; i += 4) {
+      const v = 128 + (Math.random() - 0.5) * 64;
+      img.data[i] = v;
+      img.data[i + 1] = v;
+      img.data[i + 2] = v;
+      img.data[i + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(4, 4);
+    return texture;
+  }
+
   addVisualGround() {
-    const ground = new THREE.Mesh(new THREE.BoxGeometry(64, 0.2, 64), this.floorMaterial);
-    ground.geometry.dispose();
-    ground.geometry = new THREE.BoxGeometry(96, 0.2, 96);
+    const ground = new THREE.Mesh(new THREE.BoxGeometry(512, 0.2, 512), this.floorMaterial);
+    ground.receiveShadow = true;
     ground.position.set(0, -0.12, 0);
+    const map = this.floorMaterial.map;
+    if (map) {
+      map.repeat.set(48, 48);
+    }
     this.scene.add(ground);
   }
 
@@ -351,6 +356,10 @@ export class GameRenderer {
         "sniper",
         await load("/assets/kenney/blaster-kit/Models/GLB%20format/blaster-j.glb"),
       );
+      this.weaponModels.set(
+        "shotgun",
+        await load("/assets/kenney/blaster-kit/Models/GLB%20format/blaster-d.glb"),
+      );
       this.propModels.set(
         "crate",
         await load("/assets/kenney/blaster-kit/Models/GLB%20format/crate-medium.glb"),
@@ -379,6 +388,38 @@ export class GameRenderer {
       this.firstPersonWeaponId = null;
     } catch (err) {
       console.warn("Asset loading failed, using primitive fallback", err);
+    }
+  }
+
+  async loadObjMap() {
+    try {
+      const loader = new OBJLoader();
+      const group = await new Promise<THREE.Group>((resolve, reject) => {
+        loader.load("/assets/online/afps-level/level.obj", resolve, undefined, reject);
+      });
+      const mapTexture = this.createNoiseTexture();
+      const mapMaterial = new THREE.MeshStandardMaterial({
+        color: 0x8899aa,
+        map: mapTexture,
+        roughness: 0.85,
+        metalness: 0.05,
+        side: THREE.DoubleSide,
+      });
+      group.traverse((child: THREE.Object3D) => {
+        const mesh = child as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        mesh.material = mapMaterial;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+      });
+      group.scale.setScalar(MAP_SCALE);
+      this.visualMapGroup.add(group);
+      this.addVisualGround();
+      this.scene.add(this.visualMapGroup);
+    } catch (err) {
+      console.warn("Map OBJ loading failed, using generated fallback", err);
+      this.addVisualGround();
+      this.buildDustLikeVisualMap();
     }
   }
 
@@ -868,7 +909,7 @@ export class GameRenderer {
     const wx = state.pos.x + forwardX * forwardHandOffset + rightX * rightHandOffset;
     const wz = state.pos.z + forwardZ * forwardHandOffset + rightZ * rightHandOffset;
     weapon.position.set(wx, state.pos.y + SETTINGS.weaponVisuals.handHeight, wz);
-    weapon.rotation.y = -state.yaw + Math.PI;
+    weapon.rotation.y = -state.yaw;
     weapon.visible = !state.dead;
 
     const nameY = bodyY + OVERHEAD_UI.baseOffset;
@@ -954,7 +995,7 @@ export class GameRenderer {
     return wMesh;
   }
 
-  updateFirstPersonWeapon(state: PlayerState, dt = 0, aiming = false) {
+  updateFirstPersonWeapon(state: PlayerState, dt = 0, aiming = false, reloadProgress = 0) {
     if (!this.firstPersonWeapon || this.firstPersonWeaponId !== state.weaponId) {
       if (this.firstPersonWeapon) this.camera.remove(this.firstPersonWeapon);
       this.firstPersonWeapon = this.createWeaponMesh(state.weaponId);
@@ -965,12 +1006,17 @@ export class GameRenderer {
 
     const targetAim = aiming && !state.dead ? 1 : 0;
     this.aimAmount += (targetAim - this.aimAmount) * (1 - Math.exp(-dt * 18));
+    const reloadCurve = Math.sin(Math.max(0, Math.min(1, reloadProgress)) * Math.PI);
     this.firstPersonWeapon.position.set(
       0.42 + (0.02 - 0.42) * this.aimAmount,
-      -0.34 + (-0.23 + 0.34) * this.aimAmount,
+      -0.34 + (-0.23 + 0.34) * this.aimAmount - reloadCurve * 0.25,
       -0.72 + (-0.58 + 0.72) * this.aimAmount,
     );
-    this.firstPersonWeapon.rotation.set(-0.08, Math.PI, -0.06 + 0.06 * this.aimAmount);
+    this.firstPersonWeapon.rotation.set(
+      -0.08 + reloadCurve * 0.35,
+      0,
+      -0.06 + 0.06 * this.aimAmount - reloadCurve * 0.2,
+    );
     this.firstPersonWeapon.visible = !state.dead;
   }
 
@@ -1064,7 +1110,11 @@ export class GameRenderer {
     leanInput = 0,
     aiming = false,
   ) {
-    const eyeHeight = state.crouching ? 0.95 : 1.5;
+    const targetCrouch = state.crouching ? 1 : 0;
+    this.crouchAmount += (targetCrouch - this.crouchAmount) * (1 - Math.exp(-dt * 14));
+    const standEye = 1.5;
+    const crouchEye = 0.95;
+    const eyeHeight = standEye + (crouchEye - standEye) * this.crouchAmount;
     const cy = Math.cos(state.yaw);
     const sy = Math.sin(state.yaw);
     const cp = Math.cos(state.pitch);

@@ -4,22 +4,18 @@ import {
   GRAVITY,
   GROUND_FRICTION,
   AIR_FRICTION,
-  JUMP_PADS,
-  LADDERS,
   JUMP_SPEED,
-  LEVEL,
-  MOVING_PLATFORMS,
   PLAYER_CROUCH_HEIGHT,
   PlayerInput,
   PlayerState,
   PLAYER_HEIGHT,
   PLAYER_RADIUS,
   PLAYER_SPEED,
-  SPAWN_POINTS,
   Vec3,
   WEAPONS,
   movingPlatformPosition,
 } from "./protocol.ts";
+import { JUMP_PADS, LADDERS, LEVEL, MOVING_PLATFORMS, SPAWN_POINTS } from "./mapData.ts";
 import { SETTINGS } from "./settings.ts";
 
 export function createPlayer(id: string, spawnIndex = 0): PlayerState {
@@ -44,6 +40,12 @@ export function createPlayer(id: string, spawnIndex = 0): PlayerState {
     weaponId: weapon.id,
     ammo: weapon.maxAmmo,
     lastFireTick: -9999,
+    reloadEndTick: 0,
+    spreadAccumMs: 0,
+    lastSpreadUpdateTick: 0,
+    kills: 0,
+    deaths: 0,
+    score: 0,
     lastProcessedInputSeq: 0,
   };
 }
@@ -66,6 +68,12 @@ export function resetPlayer(p: PlayerState, spawnIndex = 0): void {
   p.weaponId = weapon.id;
   p.ammo = weapon.maxAmmo;
   p.lastFireTick = -9999;
+  p.reloadEndTick = 0;
+  p.spreadAccumMs = 0;
+  p.lastSpreadUpdateTick = 0;
+  p.kills = 0;
+  p.deaths = 0;
+  p.score = 0;
   p.lastProcessedInputSeq = 0;
 }
 
@@ -99,7 +107,36 @@ export function directionTo(from: Vec3, to: Vec3): Vec3 {
   return { x: x / len, y: y / len, z: z / len };
 }
 
-export function muzzlePosition(p: PlayerState): Vec3 {
+function normalize(v: Vec3): Vec3 {
+  const len = Math.max(0.0001, Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z));
+  return { x: v.x / len, y: v.y / len, z: v.z / len };
+}
+
+function cross(a: Vec3, b: Vec3): Vec3 {
+  return {
+    x: a.y * b.z - a.z * b.y,
+    y: a.z * b.x - a.x * b.z,
+    z: a.x * b.y - a.y * b.x,
+  };
+}
+
+export function applySpread(baseDir: Vec3, spread: number): Vec3 {
+  if (spread <= 0) return baseDir;
+  const r = Math.sqrt(Math.random()) * spread;
+  const theta = Math.random() * Math.PI * 2;
+
+  const arbitrary = Math.abs(baseDir.y) < 0.9 ? { x: 0, y: 1, z: 0 } : { x: 1, y: 0, z: 0 };
+  const right = normalize(cross(arbitrary, baseDir));
+  const up = normalize(cross(baseDir, right));
+
+  return normalize({
+    x: baseDir.x + (right.x * Math.cos(theta) + up.x * Math.sin(theta)) * r,
+    y: baseDir.y + (right.y * Math.cos(theta) + up.y * Math.sin(theta)) * r,
+    z: baseDir.z + (right.z * Math.cos(theta) + up.z * Math.sin(theta)) * r,
+  });
+}
+
+export function muzzlePosition(p: PlayerState, spread = 0): Vec3 {
   const cy = Math.cos(p.yaw);
   const sy = Math.sin(p.yaw);
   const yawForward = { x: sy, z: -cy };
@@ -118,11 +155,43 @@ export function muzzlePosition(p: PlayerState): Vec3 {
     center.z = p.pos.z + yawForward.z * (weapon.forwardHandOffset + 0.04);
   }
 
-  return {
+  const pos = {
     x: center.x + dir.x * weapon.muzzleForwardOffset,
     y: center.y + weapon.muzzleUpOffset + dir.y * weapon.muzzleForwardOffset,
     z: center.z + dir.z * weapon.muzzleForwardOffset,
   };
+  if (spread <= 0) return pos;
+  const jitter = spread * 0.03;
+  return {
+    x: pos.x + (Math.random() - 0.5) * jitter,
+    y: pos.y + (Math.random() - 0.5) * jitter,
+    z: pos.z + (Math.random() - 0.5) * jitter,
+  };
+}
+
+export function currentSpread(weapon: (typeof WEAPONS)[number], accumMs: number): number {
+  const minSpread = weapon.spread ?? 0;
+  const maxSpread = weapon.spreadMax ?? minSpread;
+  const rampMs = weapon.spreadRampMs ?? 0;
+  if (rampMs <= 0 || maxSpread <= minSpread) return minSpread;
+  const t = Math.min(1, accumMs / rampMs);
+  return minSpread + (maxSpread - minSpread) * t;
+}
+
+export function updateSpreadAccum(
+  weapon: (typeof WEAPONS)[number],
+  accumMs: number,
+  dtMs: number,
+  firing: boolean,
+): number {
+  const rampMs = weapon.spreadRampMs ?? 0;
+  const recoveryMs = weapon.spreadRecoveryMs ?? 200;
+  if (firing) {
+    return Math.min(rampMs, accumMs + dtMs);
+  }
+  if (recoveryMs <= 0) return 0;
+  const decay = dtMs * (rampMs / recoveryMs);
+  return Math.max(0, accumMs - decay);
 }
 
 export function playerAABB(p: PlayerState): { min: Vec3; max: Vec3 } {
@@ -215,6 +284,22 @@ function isOnLadder(p: PlayerState): boolean {
   return LADDERS.some((ladder) => intersectAABB(box, ladder));
 }
 
+function clampToLadder(p: PlayerState): void {
+  const box = playerAABB(p);
+  for (const ladder of LADDERS) {
+    if (!intersectAABB(box, ladder)) continue;
+    p.pos.x = Math.max(
+      ladder.min.x + PLAYER_RADIUS,
+      Math.min(ladder.max.x - PLAYER_RADIUS, p.pos.x),
+    );
+    p.pos.z = Math.max(
+      ladder.min.z + PLAYER_RADIUS,
+      Math.min(ladder.max.z - PLAYER_RADIUS, p.pos.z),
+    );
+    return;
+  }
+}
+
 /**
  * Apply input to a player state (changes velocity / orientation).
  * Called before the physics step.
@@ -290,15 +375,16 @@ export function stepPlayer(p: PlayerState, dt: number): void {
 
   // Integrate position axis by axis with collision resolution
   p.pos.x += p.vel.x * dt;
-  resolveAxis(p, "x");
+  resolveAxis(p, "x", wasGrounded);
 
   p.pos.y += p.vel.y * dt;
-  resolveAxis(p, "y");
+  resolveAxis(p, "y", wasGrounded);
   resolveMovingPlatforms(p, performance.now(), dt);
 
   p.pos.z += p.vel.z * dt;
-  resolveAxis(p, "z");
+  resolveAxis(p, "z", wasGrounded);
 
+  clampToLadder(p);
   applyJumpPads(p);
 
   // Simple floor / ceiling clamp if outside world
@@ -356,7 +442,32 @@ function applyJumpPads(p: PlayerState): void {
   }
 }
 
-function resolveAxis(p: PlayerState, axis: "x" | "y" | "z"): void {
+function tryStepUp(p: PlayerState, wasGrounded: boolean): boolean {
+  if (!wasGrounded) return false;
+  const maxStep = SETTINGS.player.maxStepHeight;
+  const originalY = p.pos.y;
+  p.pos.y += maxStep;
+  const steppedBox = playerAABB(p);
+
+  for (const box of LEVEL) {
+    if (intersectAABB(steppedBox, box)) {
+      p.pos.y = originalY;
+      return false;
+    }
+  }
+
+  p.grounded = true;
+  p.vel.y = 0;
+  return true;
+}
+
+function resolveAxis(p: PlayerState, axis: "x" | "y" | "z", wasGrounded: boolean): void {
+  if (axis !== "y") {
+    const playerBox = playerAABB(p);
+    const hits = LEVEL.filter((box) => intersectAABB(playerBox, box));
+    if (hits.length > 0 && tryStepUp(p, wasGrounded)) return;
+  }
+
   for (const box of LEVEL) {
     const playerBox = playerAABB(p);
     if (!intersectAABB(playerBox, box)) continue;

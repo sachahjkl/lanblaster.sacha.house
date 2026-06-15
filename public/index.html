@@ -50,6 +50,26 @@
       pointer-events: none;
     }
     #pickup-toast[hidden] { display: none; }
+    #scoreboard {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      z-index: 11;
+      min-width: 420px; max-width: 90vw;
+      padding: 22px 26px;
+      border: 1px solid rgba(255,255,255,0.22);
+      border-radius: 16px;
+      background: rgba(2, 6, 23, 0.88);
+      box-shadow: 0 24px 90px rgba(0,0,0,0.55);
+      color: #fff; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      backdrop-filter: blur(10px);
+      pointer-events: none;
+    }
+    #scoreboard[hidden] { display: none; }
+    #scoreboard h2 { margin-bottom: 14px; color: #facc15; text-align: center; letter-spacing: 0.04em; }
+    #scoreboard table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    #scoreboard th { text-align: left; padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.25); color: #94a3b8; }
+    #scoreboard td { padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    #scoreboard tr.local td { color: #38bdf8; font-weight: 800; }
+    #scoreboard .num { text-align: right; }
     #title-screen {
       position: fixed; inset: 0; z-index: 10;
       display: grid; place-items: center;
@@ -72,17 +92,60 @@
     #logo { font-size: 42px; font-weight: 900; letter-spacing: -0.08em; margin-bottom: 8px; }
     #logo span { color: #38bdf8; }
     #tagline { color: #cbd5e1; margin-bottom: 24px; }
+    .tabs {
+      display: flex; gap: 8px; justify-content: center; margin-bottom: 16px;
+    }
+    .tab {
+      border: 1px solid rgba(255,255,255,0.2); border-radius: 10px;
+      padding: 8px 14px; background: transparent; color: #cbd5e1;
+      font: inherit; font-weight: 700; cursor: pointer;
+    }
+    .tab.active { background: rgba(56,189,248,0.22); color: #fff; border-color: #38bdf8; }
+    .room-panel { display: grid; gap: 12px; text-align: left; }
+    .room-panel[hidden] { display: none; }
+    .room-panel label { font-size: 12px; color: #94a3b8; }
+    .room-panel .hint {
+      font-size: 11px; color: #38bdf8; text-decoration: underline;
+      cursor: pointer; margin-top: -8px; margin-bottom: 2px;
+    }
+    .room-panel .hint:hover { color: #7dd3fc; }
+    .room-panel input, .room-panel select {
+      width: 100%; border: 0; border-radius: 10px; padding: 11px 12px;
+      font: inherit; background: #e5e7eb; color: #020617; outline: 2px solid transparent;
+    }
+    .room-panel input:focus { outline-color: #38bdf8; }
     #name-form { display: grid; gap: 12px; }
-    #player-name, #play-button {
+    #player-name, #play-button, #create-room-button, #join-room-button {
       border: 0; border-radius: 12px; padding: 13px 14px;
       font: inherit;
     }
-    #player-name { background: #e5e7eb; color: #020617; outline: 2px solid transparent; }
+    #player-name { background: #e5e7eb; color: #020617; outline: 2px solid transparent; margin-bottom: 18px; }
     #player-name:focus { outline-color: #38bdf8; }
-    #play-button { background: #facc15; color: #111827; font-weight: 800; cursor: pointer; }
-    #play-button:hover { background: #fde047; }
-    #play-button:disabled { cursor: wait; opacity: 0.65; }
+    #play-button, #create-room-button, #join-room-button {
+      background: #facc15; color: #111827; font-weight: 800; cursor: pointer;
+    }
+    #play-button:hover, #create-room-button:hover, #join-room-button:hover { background: #fde047; }
+    #play-button:disabled, #create-room-button:disabled, #join-room-button:disabled {
+      cursor: wait; opacity: 0.65;
+    }
     #name-error { min-height: 20px; color: #fb7185; font-weight: 800; }
+    #room-list {
+      max-height: 160px; overflow-y: auto;
+      border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
+      background: rgba(0,0,0,0.25);
+    }
+    #room-list:empty::before {
+      content: "No public rooms"; display: block; padding: 12px; text-align: center;
+      color: #94a3b8; font-size: 12px;
+    }
+    .room-item {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.08);
+      cursor: pointer;
+    }
+    .room-item:hover { background: rgba(56,189,248,0.12); }
+    .room-item.selected { background: rgba(56,189,248,0.22); }
+    .room-item-locked { color: #facc15; font-size: 11px; }
     #loading-status {
       min-height: 20px; margin-top: 12px;
       color: #38bdf8; font-weight: 900; letter-spacing: 0.08em;
@@ -118,6 +181,11 @@
       border: 0; border-radius: 12px; padding: 12px 14px;
       background: #38bdf8; color: #020617; font: inherit; font-weight: 900; cursor: pointer;
     }
+    #exit-room-button {
+      width: 100%; margin-top: 10px;
+      border: 0; border-radius: 12px; padding: 12px 14px;
+      background: #ef4444; color: white; font: inherit; font-weight: 900; cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -126,11 +194,32 @@
     <div id="title-card">
       <div id="logo">LAN <span>BLASTER</span></div>
       <div id="tagline">Pick a callsign, join the arena.</div>
-      <form id="name-form">
-        <input id="player-name" name="playerName" maxlength="24" placeholder="Username" autocomplete="nickname">
-        <div id="name-error" role="alert"></div>
-        <button id="play-button" type="submit">Join Match</button>
-      </form>
+      <input id="player-name" name="playerName" maxlength="24" placeholder="Username" autocomplete="nickname">
+      <div class="tabs">
+        <button id="tab-create" class="tab active" type="button">Create Room</button>
+        <button id="tab-join" class="tab" type="button">Join Room</button>
+      </div>
+      <div id="create-panel" class="room-panel">
+        <label>Room name</label>
+        <input id="create-room-name" maxlength="32" placeholder="My Arena">
+        <span id="auto-room-name" class="hint">Auto-generate room name</span>
+        <label>Password (optional)</label>
+        <input id="create-room-password" type="password" placeholder="Public">
+        <label>Max players</label>
+        <select id="create-room-max">
+          <option value="16" selected>16 players</option>
+          <option value="32">32 players (DANGER)</option>
+        </select>
+        <button id="create-room-button" type="button">Create Room</button>
+      </div>
+      <div id="join-panel" class="room-panel" hidden>
+        <label>Password (if required)</label>
+        <input id="join-room-password" type="password" placeholder="Password">
+        <label>Public rooms</label>
+        <div id="room-list"></div>
+        <button id="join-room-button" type="button" disabled>Join Selected Room</button>
+      </div>
+      <div id="name-error" role="alert"></div>
       <div id="loading-status"></div>
       <div id="loading-tip"></div>
     </div>
@@ -194,7 +283,32 @@
         </div>
         <input id="brightness-slider" type="range" min="0.8" max="1.8" step="0.05">
       </div>
+      <div id="room-settings" class="setting-row" hidden>
+        <div>
+          <strong>Room Settings</strong>
+          <small>Host-only: rename, password, max players</small>
+        </div>
+      </div>
+      <div id="room-settings-panel" hidden>
+        <div class="setting-row">
+          <label>Room name</label>
+          <input id="room-name-input" maxlength="32" placeholder="Room name">
+        </div>
+        <div class="setting-row">
+          <label>Password (blank = public)</label>
+          <input id="room-password-input" type="password" placeholder="Public">
+        </div>
+        <div class="setting-row">
+          <label>Max players</label>
+          <select id="room-max-input">
+            <option value="16">16 players</option>
+            <option value="32">32 players (DANGER)</option>
+          </select>
+        </div>
+        <button id="apply-room-settings" type="button" style="width:100%;margin-top:8px;border:0;border-radius:10px;padding:10px;background:#facc15;color:#111827;font:inherit;font-weight:800;cursor:pointer;">Apply Room Settings</button>
+      </div>
       <button id="resume-button" type="button">Resume</button>
+      <button id="exit-room-button" type="button">Exit Room</button>
     </div>
   </div>
   <canvas id="game"></canvas>
@@ -206,10 +320,26 @@
     <div id="hp-text">100 / 100</div>
   </div>
   <div id="pickup-toast" hidden></div>
+  <div id="scoreboard" hidden>
+    <h2>Scoreboard</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Player</th>
+          <th class="num">Kills</th>
+          <th class="num">Deaths</th>
+          <th class="num">Score</th>
+          <th class="num">Ping</th>
+        </tr>
+      </thead>
+      <tbody id="scoreboard-body"></tbody>
+    </table>
+  </div>
   <div id="info">
     WASD to move, SPACE to jump, MOUSE to look.<br>
-    Click to shoot, R to reload, 1-3 / mouse wheel to switch weapon.<br>
-    Q/E to lean, C/CTRL to crouch, click to lock pointer, ESC for settings.
+    Click to shoot, R to reload, 1-4 / mouse wheel to switch weapon.<br>
+    Q/E to lean, C/CTRL to crouch, P for scoreboard, click to lock pointer, ESC for settings.
   </div>
   <script type="importmap">
   {

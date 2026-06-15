@@ -1,4 +1,4 @@
-import { PlayerInput } from "../shared/protocol.ts";
+import { PlayerInput, WEAPONS } from "../shared/protocol.ts";
 
 export class InputManager {
   keys = new Set<string>();
@@ -9,6 +9,7 @@ export class InputManager {
   jumpQueued = false;
   reloadQueued = false;
   fireQueued = false;
+  fireHeld = false;
   currentWeaponIndex = 0;
   pointerLocked = false;
   lean = 0;
@@ -22,6 +23,7 @@ export class InputManager {
       if (e.code === "Digit1") this.currentWeaponIndex = 0;
       if (e.code === "Digit2") this.currentWeaponIndex = 1;
       if (e.code === "Digit3") this.currentWeaponIndex = 2;
+      if (e.code === "Digit4") this.currentWeaponIndex = 3;
     });
     window.addEventListener("keyup", (e) => {
       this.keys.delete(e.code);
@@ -34,11 +36,15 @@ export class InputManager {
     });
 
     document.addEventListener("mousedown", (e) => {
-      if (e.button === 0) this.fireQueued = true;
+      if (e.button === 0) {
+        this.fireQueued = true;
+        this.fireHeld = true;
+      }
       if (e.button === 2) this.aiming = true;
     });
 
     document.addEventListener("mouseup", (e) => {
+      if (e.button === 0) this.fireHeld = false;
       if (e.button === 2) this.aiming = false;
     });
 
@@ -51,9 +57,9 @@ export class InputManager {
       (e) => {
         if (!this.pointerLocked) return;
         if (e.deltaY < 0) {
-          this.currentWeaponIndex = (this.currentWeaponIndex + 1) % 3;
+          this.currentWeaponIndex = (this.currentWeaponIndex + 1) % 4;
         } else if (e.deltaY > 0) {
-          this.currentWeaponIndex = (this.currentWeaponIndex + 3 - 1) % 3;
+          this.currentWeaponIndex = (this.currentWeaponIndex + 4 - 1) % 4;
         }
       },
       { passive: true },
@@ -88,7 +94,8 @@ export class InputManager {
     this.jumpQueued = false;
     this.reloadQueued = false;
 
-    const fire = this.fireQueued;
+    const weapon = WEAPONS[this.currentWeaponIndex] ?? WEAPONS[0];
+    const fire = this.fireQueued || (this.fireHeld && weapon.automatic === true);
     this.fireQueued = false;
 
     return {
