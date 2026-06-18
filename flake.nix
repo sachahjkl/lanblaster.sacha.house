@@ -10,6 +10,23 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
+        lib = pkgs.lib;
+
+        source = lib.cleanSourceWith {
+          src = ./.;
+          filter = path: _type:
+            let
+              rel = lib.removePrefix ((toString ./. ) + "/") (toString path);
+            in
+            rel == ""
+            || rel == "build.ts"
+            || rel == "deno.json"
+            || rel == "deno.lock"
+            || rel == "public"
+            || rel == "src"
+            || lib.hasPrefix "public/" rel
+            || lib.hasPrefix "src/" rel;
+        };
 
         runtimeTools = with pkgs; [
           deno
@@ -21,6 +38,53 @@
           oxlint
           oxfmt
         ];
+
+        built = pkgs.stdenvNoCC.mkDerivation {
+          pname = "lanblaster-built";
+          version = "2026.06.15";
+          src = source;
+          nativeBuildInputs = [pkgs.deno];
+
+          buildPhase = ''
+            runHook preBuild
+            export DENO_DIR="$TMPDIR/deno-cache"
+            mkdir -p "$DENO_DIR"
+            deno install --node-modules-dir --lock=deno.lock
+            deno task build
+            runHook postBuild
+          '';
+
+          installPhase = ''
+            runHook preInstall
+            mkdir -p "$out/share/lanblaster/dist" "$out/share/lanblaster/src"
+            cp deno.json deno.lock "$out/share/lanblaster/"
+            cp -r dist/client "$out/share/lanblaster/dist/"
+            cp -r src/server "$out/share/lanblaster/src/"
+            cp -r src/shared "$out/share/lanblaster/src/"
+            runHook postInstall
+          '';
+        };
+
+        lanblaster = pkgs.stdenvNoCC.mkDerivation {
+          pname = "lanblaster";
+          version = "2026.06.15";
+          dontUnpack = true;
+          nativeBuildInputs = [pkgs.deno pkgs.makeWrapper];
+
+          installPhase = ''
+            runHook preInstall
+            mkdir -p "$out/share/lanblaster"
+            cp -r "${built}/share/lanblaster/." "$out/share/lanblaster/"
+            makeWrapper ${pkgs.deno}/bin/deno "$out/bin/lanblaster-server" \
+              --set DENO_DIR "/var/lib/lanblaster/deno-cache" \
+              --set DENO_NO_UPDATE_CHECK "1" \
+              --chdir "$out/share/lanblaster" \
+              --add-flags "run --allow-net --allow-read --allow-env src/server/server.ts"
+            runHook postInstall
+          '';
+
+          meta.mainProgram = "lanblaster-server";
+        };
 
         runBuild = pkgs.writeShellApplication {
           name = "webgpu-mp-build";
@@ -78,21 +142,22 @@
       in
       {
         packages = {
+          inherit lanblaster;
           build = runBuild;
           server = runServer;
           proxy = runProxy;
           lan = runLan;
           live = runLive;
-          default = runServer;
+          default = lanblaster;
         };
 
         apps = {
           build = flake-utils.lib.mkApp { drv = runBuild; };
-          server = flake-utils.lib.mkApp { drv = runServer; };
+          server = flake-utils.lib.mkApp { drv = lanblaster; };
           proxy = flake-utils.lib.mkApp { drv = runProxy; };
-          lan = flake-utils.lib.mkApp { drv = runLan; };
+          lan = flake-utils.lib.mkApp { drv = lanblaster; };
           live = flake-utils.lib.mkApp { drv = runLive; };
-          default = flake-utils.lib.mkApp { drv = runServer; };
+          default = flake-utils.lib.mkApp { drv = lanblaster; };
         };
 
         devShells.default = pkgs.mkShell {
