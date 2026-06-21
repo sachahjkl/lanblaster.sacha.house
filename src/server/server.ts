@@ -21,6 +21,7 @@ import {
   createPlayer,
   applySpread,
   currentSpreadForPlayer,
+  eyePosition,
   lookDirection,
   muzzlePosition,
   pointOnRay,
@@ -222,7 +223,8 @@ function firePellet(
   tick: number,
 ): FireEvent {
   const spread = currentSpreadForPlayer(p, weapon, p.spreadAccumMs);
-  const origin = muzzlePosition(p, spread);
+  const origin = eyePosition(p);
+  const visualOrigin = muzzlePosition(p, spread);
   const dir = applySpread(lookDirection(p), spread);
   const levelHit = raycastLevel(origin, dir, FIRE_MAX_DIST, room.level);
   const playerHit = raycastPlayers(origin, dir, FIRE_MAX_DIST, p.id, allPlayerStates(room));
@@ -363,6 +365,7 @@ function firePellet(
     tick,
     shooterId: p.id,
     origin,
+    visualOrigin,
     direction: dir,
     weaponId: weapon.id,
     hitPlayerId,

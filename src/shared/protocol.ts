@@ -241,6 +241,7 @@ export interface FireEvent {
   tick: number;
   shooterId: string;
   origin: Vec3;
+  visualOrigin?: Vec3;
   direction: Vec3;
   weaponId: string;
   hitPlayerId?: string;

@@ -17,6 +17,8 @@ export const SETTINGS = {
     radius: 0.4,
     height: 1.6,
     crouchHeight: 1.0,
+    eyeHeight: 1.5,
+    crouchEyeHeight: 0.95,
     crouchSpeedMultiplier: 0.55,
     groundFriction: 0.85,
     airFriction: 0.98,

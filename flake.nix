@@ -153,11 +153,11 @@
 
       apps = {
         build = flake-utils.lib.mkApp {drv = runBuild;};
-        server = flake-utils.lib.mkApp {drv = lanblaster;};
+        server = flake-utils.lib.mkApp {drv = lanblaster; exePath = "/bin/lanblaster-server";};
         proxy = flake-utils.lib.mkApp {drv = runProxy;};
-        lan = flake-utils.lib.mkApp {drv = lanblaster;};
+        lan = flake-utils.lib.mkApp {drv = runLan;};
         live = flake-utils.lib.mkApp {drv = runLive;};
-        default = flake-utils.lib.mkApp {drv = lanblaster;};
+        default = flake-utils.lib.mkApp {drv = runLan;};
       };
 
       devShells.default = pkgs.mkShell {

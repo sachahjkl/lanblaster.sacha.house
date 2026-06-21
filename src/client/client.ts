@@ -551,7 +551,7 @@ class GameClient {
     if (ev.shooterId === this.localId) return;
 
     this.audio.playShoot(ev.weaponId);
-    const origin = ev.origin;
+    const origin = ev.visualOrigin ?? ev.origin;
     const dir = ev.direction;
     const maxLen = 200;
     const end: Vec3 = ev.hitPos ?? {
@@ -672,7 +672,8 @@ class GameClient {
         for (let i = 0; i < pellets; i++) {
           const origin = muzzlePosition(this.localState, spread);
           const dir = applySpread(lookDirection(this.localState), spread);
-          const end = pointOnRay(origin, dir, SETTINGS.combat.fireMaxDistance);
+          const gameplayOrigin = eyePosition(this.localState);
+          const end = pointOnRay(gameplayOrigin, dir, SETTINGS.combat.fireMaxDistance);
           this.renderer.addTracer(origin, end);
         }
       }

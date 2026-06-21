@@ -1375,8 +1375,8 @@ export class GameRenderer {
   ) {
     const targetCrouch = state.crouching ? 1 : 0;
     this.crouchAmount += (targetCrouch - this.crouchAmount) * (1 - Math.exp(-dt * 14));
-    const standEye = 1.5;
-    const crouchEye = 0.95;
+    const standEye = SETTINGS.player.eyeHeight;
+    const crouchEye = SETTINGS.player.crouchEyeHeight;
     const eyeHeight = standEye + (crouchEye - standEye) * this.crouchAmount;
     const cameraYaw = state.yaw + recoilYaw;
     const cameraPitch = state.pitch + recoilPitch;

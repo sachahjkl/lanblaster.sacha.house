@@ -190,8 +190,8 @@ export function resetPlayer(p: PlayerState, level?: LevelDefinition, spawnIndex 
 }
 
 export function eyePosition(p: PlayerState): Vec3 {
-  const height = p.crouching ? PLAYER_CROUCH_HEIGHT : PLAYER_HEIGHT;
-  return { x: p.pos.x, y: p.pos.y + height * 0.85, z: p.pos.z };
+  const eyeHeight = p.crouching ? SETTINGS.player.crouchEyeHeight : SETTINGS.player.eyeHeight;
+  return { x: p.pos.x, y: p.pos.y + eyeHeight, z: p.pos.z };
 }
 
 export function lookDirection(p: PlayerState): Vec3 {

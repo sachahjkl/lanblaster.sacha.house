@@ -27,7 +27,7 @@
       position: absolute; top: 50%; left: 50%;
       width: 20px; height: 20px;
       transform: translate(-50%, -50%);
-      pointer-events: none;
+      pointer-events: auto;
       filter: drop-shadow(0 0 1px rgba(0,0,0,0.9));
     }
     #crosshair svg { width: 100%; height: 100%; display: block; }
@@ -57,7 +57,7 @@
       background: rgba(0,0,0,0.72); color: #facc15;
       font-family: monospace; font-size: 22px; font-weight: 900;
       letter-spacing: 0.06em; text-transform: uppercase; text-shadow: 2px 2px 0 #000;
-      pointer-events: none;
+      pointer-events: auto;
     }
     #pickup-toast[hidden] { display: none; }
     #damage-flash {
@@ -70,6 +70,7 @@
       position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
       z-index: 11;
       min-width: 420px; max-width: 90vw;
+      max-height: 95vh;
       padding: 22px 26px;
       border: 1px solid rgba(255,255,255,0.22);
       border-radius: 16px;
@@ -77,11 +78,20 @@
       box-shadow: 0 24px 90px rgba(0,0,0,0.55);
       color: #fff; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       backdrop-filter: blur(10px);
-      pointer-events: none;
+      pointer-events: auto;
+      display: flex;
+      flex-direction: column;
     }
     #scoreboard[hidden] { display: none; }
     #scoreboard h2 { margin-bottom: 14px; color: #facc15; text-align: center; letter-spacing: 0.04em; }
     #scoreboard table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    #scoreboard thead th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: rgba(2, 6, 23, 0.96);
+      backdrop-filter: blur(10px);
+    }
     #scoreboard th { text-align: left; padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.25); color: #94a3b8; }
     #scoreboard td { padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,0.08); }
     #scoreboard tr.local td { color: #38bdf8; font-weight: 800; }
@@ -97,6 +107,7 @@
     #title-screen[hidden] { display: none; }
     #title-card {
       width: min(420px, calc(100vw - 32px));
+      max-height: 95vh;
       padding: 32px;
       border: 1px solid rgba(255,255,255,0.18);
       border-radius: 22px;
@@ -104,6 +115,8 @@
       box-shadow: 0 24px 90px rgba(0,0,0,0.5);
       text-align: center;
       backdrop-filter: blur(14px);
+      display: flex;
+      flex-direction: column;
     }
     #logo { font-size: 42px; font-weight: 900; letter-spacing: -0.08em; margin-bottom: 8px; }
     #logo span { color: #38bdf8; }
@@ -131,19 +144,32 @@
     }
     .room-panel input:focus { outline-color: #38bdf8; }
     #name-form { display: grid; gap: 12px; }
-    #player-name, #play-button, #create-room-button, #join-room-button {
+    #player-name {
       border: 0; border-radius: 12px; padding: 13px 14px;
       font: inherit;
     }
     #player-name { background: #e5e7eb; color: #020617; outline: 2px solid transparent; margin-bottom: 18px; }
     #player-name:focus { outline-color: #38bdf8; }
-    #play-button, #create-room-button, #join-room-button {
-      background: #facc15; color: #111827; font-weight: 800; cursor: pointer;
+    .ui-button {
+      width: 100%;
+      border: 0;
+      border-radius: 12px;
+      padding: 12px 14px;
+      font: inherit;
+      font-weight: 800;
+      cursor: pointer;
+      transition: background 120ms ease, opacity 120ms ease, transform 120ms ease;
     }
-    #play-button:hover, #create-room-button:hover, #join-room-button:hover { background: #fde047; }
-    #play-button:disabled, #create-room-button:disabled, #join-room-button:disabled {
+    .ui-button:hover { transform: translateY(-1px); }
+    .ui-button:disabled {
       cursor: wait; opacity: 0.65;
     }
+    .ui-button-primary { background: #facc15; color: #111827; }
+    .ui-button-primary:hover { background: #fde047; }
+    .ui-button-info { background: #38bdf8; color: #020617; }
+    .ui-button-info:hover { background: #7dd3fc; }
+    .ui-button-danger { background: #ef4444; color: white; }
+    .ui-button-danger:hover { background: #f87171; }
     #name-error { min-height: 20px; color: #fb7185; font-weight: 800; }
     #room-list {
       max-height: 160px; overflow-y: auto;
@@ -180,13 +206,40 @@
     #pause-menu[hidden] { display: none; }
     #pause-card {
       width: min(380px, calc(100vw - 32px));
+      max-height: 95vh;
       padding: 26px;
       border: 1px solid rgba(255,255,255,0.2);
       border-radius: 18px;
       background: rgba(15,23,42,0.92);
       box-shadow: 0 24px 90px rgba(0,0,0,0.55);
+      display: flex;
+      flex-direction: column;
     }
     #pause-card h2 { margin-bottom: 18px; }
+    .overlay-scroll {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding-right: 8px;
+      margin-right: -8px;
+    }
+    .overlay-scroll {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(56,189,248,0.85) rgba(15,23,42,0.55);
+    }
+    .overlay-scroll::-webkit-scrollbar { width: 10px; }
+    .overlay-scroll::-webkit-scrollbar-track {
+      background: rgba(15,23,42,0.55);
+      border-radius: 999px;
+    }
+    .overlay-scroll::-webkit-scrollbar-thumb {
+      background: linear-gradient(180deg, rgba(125,211,252,0.95), rgba(56,189,248,0.78));
+      border: 2px solid rgba(15,23,42,0.9);
+      border-radius: 999px;
+    }
+    .overlay-scroll::-webkit-scrollbar-thumb:hover {
+      background: linear-gradient(180deg, rgba(186,230,253,0.98), rgba(14,165,233,0.88));
+    }
     #death-screen {
       position: fixed; inset: 0; z-index: 14;
       display: grid; place-items: center;
@@ -197,12 +250,15 @@
     #death-screen[hidden] { display: none; }
     #death-card {
       width: min(360px, calc(100vw - 32px));
+      max-height: 95vh;
       padding: 24px;
       border: 1px solid rgba(248,113,113,0.4);
       border-radius: 18px;
       background: rgba(30, 10, 10, 0.92);
       box-shadow: 0 24px 90px rgba(0,0,0,0.55);
       text-align: center;
+      display: flex;
+      flex-direction: column;
     }
     #death-card h2 { margin-bottom: 10px; color: #fca5a5; }
     #death-card p { color: #fecaca; margin-bottom: 14px; line-height: 1.5; }
@@ -217,12 +273,15 @@
     #reconnect-overlay[hidden] { display: none; }
     #reconnect-card {
       width: min(380px, calc(100vw - 32px));
+      max-height: 95vh;
       padding: 26px;
       border: 1px solid rgba(248,113,113,0.45);
       border-radius: 18px;
       background: rgba(30, 10, 10, 0.92);
       box-shadow: 0 24px 90px rgba(0,0,0,0.55);
       text-align: center;
+      display: flex;
+      flex-direction: column;
     }
     #reconnect-card h2 { margin-bottom: 10px; color: #fca5a5; }
     #reconnect-card p { color: #fecaca; margin-bottom: 18px; line-height: 1.5; }
@@ -235,10 +294,7 @@
       animation: reconnect-shrink 30s linear forwards;
     }
     @keyframes reconnect-shrink { from { transform: scaleX(1); } to { transform: scaleX(0); } }
-    #respawn-button {
-      width: 100%; border: 0; border-radius: 12px; padding: 12px 14px;
-      background: #f87171; color: white; font: inherit; font-weight: 900; cursor: pointer;
-    }
+    #respawn-button { font-weight: 900; }
     #sniper-scope {
       position: fixed; inset: 0; z-index: 6; pointer-events: none;
       background:
@@ -288,15 +344,35 @@
       gap: 16px; padding: 14px 0; border-top: 1px solid rgba(255,255,255,0.12);
     }
     .setting-row small { display: block; color: #94a3b8; margin-top: 3px; }
-    #resume-button {
-      width: 100%; margin-top: 18px;
-      border: 0; border-radius: 12px; padding: 12px 14px;
-      background: #38bdf8; color: #020617; font: inherit; font-weight: 900; cursor: pointer;
+    #resume-button { margin-top: 18px; font-weight: 900; }
+    #apply-room-settings {
+      margin-top: 8px;
+      border-radius: 10px;
+      padding: 10px;
     }
-    #exit-room-button {
-      width: 100%; margin-top: 10px;
-      border: 0; border-radius: 12px; padding: 12px 14px;
-      background: #ef4444; color: white; font: inherit; font-weight: 900; cursor: pointer;
+    #exit-room-button { margin-top: 10px; font-weight: 900; }
+    #title-card-body, #scoreboard-scroll, #death-card-body, #reconnect-card-body { min-height: 0; }
+    @media (max-width: 640px) {
+      #title-card, #pause-card, #scoreboard, #death-card, #reconnect-card {
+        width: min(100vw - 20px, 420px);
+        max-height: 95vh;
+        padding: 18px;
+      }
+      #scoreboard {
+        min-width: 0;
+      }
+      #logo {
+        font-size: 34px;
+      }
+      .setting-row {
+        gap: 12px;
+        padding: 12px 0;
+      }
+      .overlay-scroll {
+        padding-right: 6px;
+        margin-right: -6px;
+      }
+      .overlay-scroll::-webkit-scrollbar { width: 8px; }
     }
   </style>
 </head>
@@ -306,123 +382,127 @@
     <div id="title-card">
       <div id="logo">LAN <span>BLASTER</span></div>
       <div id="tagline">Pick a callsign, join the arena.</div>
-      <input id="player-name" name="playerName" maxlength="24" placeholder="Username" autocomplete="nickname">
-      <div class="tabs">
-        <button id="tab-create" class="tab active" type="button">Create Room</button>
-        <button id="tab-join" class="tab" type="button">Join Room</button>
+      <div id="title-card-body" class="overlay-scroll">
+        <input id="player-name" name="playerName" maxlength="24" placeholder="Username" autocomplete="nickname">
+        <div class="tabs">
+          <button id="tab-create" class="tab active" type="button">Create Room</button>
+          <button id="tab-join" class="tab" type="button">Join Room</button>
+        </div>
+        <div id="create-panel" class="room-panel">
+          <label>Room name</label>
+          <input id="create-room-name" maxlength="32" placeholder="My Arena">
+          <span id="auto-room-name" class="hint">Auto-generate room name</span>
+          <label>Password (optional)</label>
+          <input id="create-room-password" type="password" placeholder="Public">
+          <label>Level</label>
+          <select id="create-room-level"></select>
+          <label>Max players</label>
+          <select id="create-room-max">
+            <option value="16" selected>16 players</option>
+            <option value="32">32 players (DANGER)</option>
+          </select>
+          <button id="create-room-button" class="ui-button ui-button-primary" type="button">Create Room</button>
+        </div>
+        <div id="join-panel" class="room-panel" hidden>
+          <label>Password (if required)</label>
+          <input id="join-room-password" type="password" placeholder="Password">
+          <label>Public rooms</label>
+          <div id="room-list" class="overlay-scroll"></div>
+          <button id="join-room-button" class="ui-button ui-button-primary" type="button" disabled>Join Selected Room</button>
+        </div>
+        <div id="name-error" role="alert"></div>
+        <div id="loading-status"></div>
+        <div id="loading-tip"></div>
       </div>
-      <div id="create-panel" class="room-panel">
-        <label>Room name</label>
-        <input id="create-room-name" maxlength="32" placeholder="My Arena">
-        <span id="auto-room-name" class="hint">Auto-generate room name</span>
-        <label>Password (optional)</label>
-        <input id="create-room-password" type="password" placeholder="Public">
-        <label>Level</label>
-        <select id="create-room-level"></select>
-        <label>Max players</label>
-        <select id="create-room-max">
-          <option value="16" selected>16 players</option>
-          <option value="32">32 players (DANGER)</option>
-        </select>
-        <button id="create-room-button" type="button">Create Room</button>
-      </div>
-      <div id="join-panel" class="room-panel" hidden>
-        <label>Password (if required)</label>
-        <input id="join-room-password" type="password" placeholder="Password">
-        <label>Public rooms</label>
-        <div id="room-list"></div>
-        <button id="join-room-button" type="button" disabled>Join Selected Room</button>
-      </div>
-      <div id="name-error" role="alert"></div>
-      <div id="loading-status"></div>
-      <div id="loading-tip"></div>
     </div>
   </div>
   <div id="pause-menu" hidden>
     <div id="pause-card">
       <h2>Paused</h2>
-      <div class="setting-row">
-        <div>
-          <strong>Head Sway</strong>
-          <small>Subtle first-person camera movement</small>
-        </div>
-        <input id="head-sway-toggle" type="checkbox">
-      </div>
-      <div class="setting-row">
-        <div>
-          <strong>Music</strong>
-          <small>Generated arena riff</small>
-        </div>
-        <input id="music-toggle" type="checkbox">
-      </div>
-      <div class="setting-row">
-        <div>
-          <strong>Master Volume</strong>
-          <small>Everything audio</small>
-        </div>
-        <input id="master-volume-slider" type="range" min="0" max="1" step="0.05">
-      </div>
-      <div class="setting-row">
-        <div>
-          <strong>Music Volume</strong>
-          <small>Riff loudness</small>
-        </div>
-        <input id="music-volume-slider" type="range" min="0" max="1" step="0.05">
-      </div>
-      <div class="setting-row">
-        <div>
-          <strong>SFX</strong>
-          <small>Weapons, pads, movement</small>
-        </div>
-        <input id="sfx-toggle" type="checkbox">
-      </div>
-      <div class="setting-row">
-        <div>
-          <strong>SFX Volume</strong>
-          <small>Effects loudness</small>
-        </div>
-        <input id="sfx-volume-slider" type="range" min="0" max="1" step="0.05">
-      </div>
-      <div class="setting-row">
-        <div>
-          <strong>Shadows</strong>
-          <small>Richer lighting, costs a little GPU</small>
-        </div>
-        <input id="shadows-toggle" type="checkbox">
-      </div>
-      <div class="setting-row">
-        <div>
-          <strong>Brightness</strong>
-          <small>Scene exposure: <span id="brightness-value">128%</span></small>
-        </div>
-        <input id="brightness-slider" type="range" min="0.8" max="1.8" step="0.05">
-      </div>
-      <div id="room-settings" class="setting-row" hidden>
-        <div>
-          <strong>Room Settings</strong>
-          <small>Host-only: rename, password, max players</small>
-        </div>
-      </div>
-      <div id="room-settings-panel" hidden>
+      <div id="pause-settings-body" class="overlay-scroll">
         <div class="setting-row">
-          <label>Room name</label>
-          <input id="room-name-input" maxlength="32" placeholder="Room name">
+          <div>
+            <strong>Head Sway</strong>
+            <small>Subtle first-person camera movement</small>
+          </div>
+          <input id="head-sway-toggle" type="checkbox">
         </div>
         <div class="setting-row">
-          <label>Password (blank = public)</label>
-          <input id="room-password-input" type="password" placeholder="Public">
+          <div>
+            <strong>Music</strong>
+            <small>Generated arena riff</small>
+          </div>
+          <input id="music-toggle" type="checkbox">
         </div>
         <div class="setting-row">
-          <label>Max players</label>
-          <select id="room-max-input">
-            <option value="16">16 players</option>
-            <option value="32">32 players (DANGER)</option>
-          </select>
+          <div>
+            <strong>Master Volume</strong>
+            <small>Everything audio</small>
+          </div>
+          <input id="master-volume-slider" type="range" min="0" max="1" step="0.05">
         </div>
-        <button id="apply-room-settings" type="button" style="width:100%;margin-top:8px;border:0;border-radius:10px;padding:10px;background:#facc15;color:#111827;font:inherit;font-weight:800;cursor:pointer;">Apply Room Settings</button>
+        <div class="setting-row">
+          <div>
+            <strong>Music Volume</strong>
+            <small>Riff loudness</small>
+          </div>
+          <input id="music-volume-slider" type="range" min="0" max="1" step="0.05">
+        </div>
+        <div class="setting-row">
+          <div>
+            <strong>SFX</strong>
+            <small>Weapons, pads, movement</small>
+          </div>
+          <input id="sfx-toggle" type="checkbox">
+        </div>
+        <div class="setting-row">
+          <div>
+            <strong>SFX Volume</strong>
+            <small>Effects loudness</small>
+          </div>
+          <input id="sfx-volume-slider" type="range" min="0" max="1" step="0.05">
+        </div>
+        <div class="setting-row">
+          <div>
+            <strong>Shadows</strong>
+            <small>Richer lighting, costs a little GPU</small>
+          </div>
+          <input id="shadows-toggle" type="checkbox">
+        </div>
+        <div class="setting-row">
+          <div>
+            <strong>Brightness</strong>
+            <small>Scene exposure: <span id="brightness-value">128%</span></small>
+          </div>
+          <input id="brightness-slider" type="range" min="0.8" max="1.8" step="0.05">
+        </div>
+        <div id="room-settings" class="setting-row" hidden>
+          <div>
+            <strong>Room Settings</strong>
+            <small>Host-only: rename, password, max players</small>
+          </div>
+        </div>
+        <div id="room-settings-panel" hidden>
+          <div class="setting-row">
+            <label>Room name</label>
+            <input id="room-name-input" maxlength="32" placeholder="Room name">
+          </div>
+          <div class="setting-row">
+            <label>Password (blank = public)</label>
+            <input id="room-password-input" type="password" placeholder="Public">
+          </div>
+          <div class="setting-row">
+            <label>Max players</label>
+            <select id="room-max-input">
+              <option value="16">16 players</option>
+              <option value="32">32 players (DANGER)</option>
+            </select>
+          </div>
+          <button id="apply-room-settings" class="ui-button ui-button-primary" type="button">Apply Room Settings</button>
+        </div>
       </div>
-      <button id="resume-button" type="button">Resume</button>
-      <button id="exit-room-button" type="button">Exit Room</button>
+      <button id="resume-button" class="ui-button ui-button-info" type="button">Resume</button>
+      <button id="exit-room-button" class="ui-button ui-button-danger" type="button">Exit Room</button>
     </div>
   </div>
   <canvas id="game"></canvas>
@@ -457,19 +537,21 @@
   <div id="event-feed"></div>
   <div id="scoreboard" hidden>
     <h2>Scoreboard</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>Player</th>
-          <th class="num">Kills</th>
-          <th class="num">Deaths</th>
-          <th class="num">Score</th>
-          <th class="num">Ping</th>
-        </tr>
-      </thead>
-      <tbody id="scoreboard-body"></tbody>
-    </table>
+    <div id="scoreboard-scroll" class="overlay-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Player</th>
+            <th class="num">Kills</th>
+            <th class="num">Deaths</th>
+            <th class="num">Score</th>
+            <th class="num">Ping</th>
+          </tr>
+        </thead>
+        <tbody id="scoreboard-body"></tbody>
+      </table>
+    </div>
   </div>
   <div id="info">
     WASD to move, SPACE to jump, MOUSE to look.<br>
@@ -479,15 +561,19 @@
   <div id="death-screen" hidden>
     <div id="death-card">
       <h2>You Died</h2>
-      <p id="death-message">Respawn when you're ready.</p>
-      <button id="respawn-button" type="button">Respawn Now</button>
+      <div id="death-card-body" class="overlay-scroll">
+        <p id="death-message">Respawn when you're ready.</p>
+      </div>
+      <button id="respawn-button" class="ui-button ui-button-danger" type="button">Respawn Now</button>
     </div>
   </div>
   <div id="reconnect-overlay" hidden>
     <div id="reconnect-card">
       <h2>Connection Lost</h2>
-      <p id="reconnect-message">Trying to reconnect...</p>
-      <div id="reconnect-progress"><div id="reconnect-progress-bar"></div></div>
+      <div id="reconnect-card-body" class="overlay-scroll">
+        <p id="reconnect-message">Trying to reconnect...</p>
+        <div id="reconnect-progress"><div id="reconnect-progress-bar"></div></div>
+      </div>
     </div>
   </div>
   <script type="module" src="./client.js"></script>
