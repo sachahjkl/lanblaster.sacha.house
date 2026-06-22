@@ -44,12 +44,12 @@
 
       built = pkgs.stdenvNoCC.mkDerivation {
         pname = "lanblaster-built";
-        version = "2026.06.15";
+        version = "2026.06.22";
         src = source;
         nativeBuildInputs = [pkgs.deno];
         outputHashAlgo = "sha256";
         outputHashMode = "recursive";
-        outputHash = "sha256-5IrYoMuCZlPWpDv/GISANewW/8/1/VU6xvqFPBV1X8k=";
+        outputHash = "sha256-0DlU1upNVnT+1lQJmmIFQwBGB1ZxkxpCzcfA/zfByBU=";
         buildCommand = ''
           cp -r $src /build/project
           chmod -R u+w /build/project
@@ -68,7 +68,7 @@
 
       lanblaster = pkgs.stdenvNoCC.mkDerivation {
         pname = "lanblaster";
-        version = "2026.06.15";
+        version = "2026.06.22";
         dontUnpack = true;
         nativeBuildInputs = [pkgs.deno pkgs.makeWrapper];
 
