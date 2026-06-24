@@ -1,0 +1,8 @@
+name: "lanblaster.sacha.house"
+description: "Gaming B) - https://lanblaster.sacha.house/"
+topics: []
+homepage: ""
+source:
+  provider: gitlab
+  namespace: "sachahjkl"
+  path: "sachahjkl/lanblaster.sacha.house"
