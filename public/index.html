@@ -304,6 +304,11 @@
       opacity: 0; transition: opacity 120ms linear;
     }
     #sniper-scope.active { opacity: 1; }
+    #sniper-zoom {
+      position: absolute; bottom: 80px; left: 50%; transform: translateX(-50%);
+      color: #facc15; font-family: monospace; font-size: 14px; font-weight: 900;
+      text-shadow: 1px 1px 0 #000; pointer-events: none;
+    }
     #sniper-scope::before, #sniper-scope::after {
       content: ""; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
       background: rgba(0,0,0,0.85);
@@ -476,6 +481,20 @@
           </div>
           <input id="brightness-slider" type="range" min="0.8" max="1.8" step="0.05">
         </div>
+        <div class="setting-row">
+          <div>
+            <strong>V-Sync</strong>
+            <small>Synchronize with display refresh</small>
+          </div>
+          <input id="vsync-toggle" type="checkbox">
+        </div>
+        <div class="setting-row">
+          <div>
+            <strong>Max FPS</strong>
+            <small>Frame rate cap: <span id="fps-cap-value">Unlimited</span></small>
+          </div>
+          <input id="fps-cap-slider" type="range" min="0" max="240" step="1">
+        </div>
         <div id="room-settings" class="setting-row" hidden>
           <div>
             <strong>Room Settings</strong>
@@ -526,6 +545,7 @@
     <div id="ammo">12 / 12</div>
     <div id="hp-bar"><div id="hp-fill"></div></div>
     <div id="hp-text">100 / 100</div>
+    <div id="sniper-zoom" hidden></div>
   </div>
   <div id="interact-hint"></div>
   <div id="pickup-toast" hidden></div>

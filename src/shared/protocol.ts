@@ -116,7 +116,7 @@ export const WEAPONS: WeaponConfig[] = [
     name: "Sniper",
     muzzleOffset: { x: 0, y: 0.052, z: -0.164 },
     adsFov: 26,
-    adsZoomFovs: [34, 26, 18, 12],
+    adsZoomFovs: [34, 26, 18, 10, 5],
     damage: 80,
     cooldownMs: 1200,
     maxAmmo: 5,

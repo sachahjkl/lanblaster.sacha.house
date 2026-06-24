@@ -49,7 +49,7 @@
         nativeBuildInputs = [pkgs.deno];
         outputHashAlgo = "sha256";
         outputHashMode = "recursive";
-        outputHash = "sha256-0DlU1upNVnT+1lQJmmIFQwBGB1ZxkxpCzcfA/zfByBU=";
+        outputHash = "sha256-8fLFpBaE9exrhm0VSX31t7zxxuvOddlwubBW6s0t9Es=";
         buildCommand = ''
           cp -r $src /build/project
           chmod -R u+w /build/project

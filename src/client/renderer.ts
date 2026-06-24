@@ -40,6 +40,8 @@ const SKYBOX_URLS = [
 export interface RendererSettings {
   brightness: number;
   shadows: boolean;
+  vsync: boolean;
+  fpsCap: number;
 }
 
 export class GameRenderer {

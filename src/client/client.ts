@@ -47,6 +47,8 @@ interface GameSettings extends RendererSettings {
   musicVolume: number;
   sfx: boolean;
   sfxVolume: number;
+  vsync: boolean;
+  fpsCap: number;
 }
 
 const DEFAULT_SETTINGS: GameSettings = {
@@ -58,6 +60,8 @@ const DEFAULT_SETTINGS: GameSettings = {
   shadows: true,
   sfx: true,
   sfxVolume: 1,
+  vsync: true,
+  fpsCap: 0,
 };
 
 function loadSettings(): GameSettings {
@@ -117,6 +121,7 @@ class GameClient {
   respawnButton = document.getElementById("respawn-button") as HTMLButtonElement;
   damageFlash = document.getElementById("damage-flash") as HTMLDivElement;
   sniperScope = document.getElementById("sniper-scope") as HTMLDivElement;
+  sniperZoom = document.getElementById("sniper-zoom") as HTMLDivElement;
   chatContainer = document.getElementById("chat-container") as HTMLDivElement;
   chatInput = document.getElementById("chat-input") as HTMLInputElement;
   reconnectOverlay = document.getElementById("reconnect-overlay") as HTMLDivElement;
@@ -134,6 +139,7 @@ class GameClient {
   lastSnapshotReceivedAt = performance.now();
   stopped = false;
   started = false;
+  renderTimer: number | undefined;
   localSimulationTimer = 0;
   stateFlushTimer = 0;
   healthTimer = 0;
@@ -196,7 +202,11 @@ class GameClient {
     this.stateFlushTimer = setInterval(() => this.flushState(), 1000 / SNAPSHOOT_RATE);
     this.healthTimer = setInterval(() => void this.checkServerHealth(), 3000);
     void this.checkServerHealth();
-    requestAnimationFrame((time) => this.renderLoop(time));
+    if (this.settings.vsync) {
+      requestAnimationFrame((time) => this.renderLoop(time));
+    } else {
+      this.renderLoop(performance.now());
+    }
   }
 
   onClose(event: CloseEvent) {
@@ -211,6 +221,10 @@ class GameClient {
 
   stop() {
     this.stopped = true;
+    if (this.renderTimer !== undefined) {
+      clearTimeout(this.renderTimer);
+      this.renderTimer = undefined;
+    }
     if (this.started) {
       clearInterval(this.localSimulationTimer);
       clearInterval(this.stateFlushTimer);
@@ -776,8 +790,16 @@ class GameClient {
       ? `Respawn Now (${remainingSeconds}s auto)`
       : "Respawn Now";
 
-    const scoped = !p.dead && this.input.aiming && getWeapon(p.weaponId).id === "sniper";
+    const weaponConfig = getWeapon(p.weaponId);
+    const scoped = !p.dead && this.input.aiming && weaponConfig.id === "sniper";
     this.sniperScope.classList.toggle("active", scoped);
+    if (scoped) {
+      const zoomFov = this.input.aimFov(weaponConfig);
+      this.sniperZoom.textContent = `ZOOM ${Math.round(75 / zoomFov * 10) / 10}x`;
+      this.sniperZoom.hidden = false;
+    } else {
+      this.sniperZoom.hidden = true;
+    }
   }
 
   updateScoreboard(snapshot: Snapshot) {
@@ -859,7 +881,17 @@ class GameClient {
     this.updateHUD();
     this.renderer.render();
 
-    if (!this.stopped) requestAnimationFrame((time) => this.renderLoop(time));
+    if (!this.stopped) {
+      if (this.settings.vsync) {
+        requestAnimationFrame((time) => this.renderLoop(time));
+      } else {
+        const fps = this.settings.fpsCap;
+        const delay = fps > 0 ? 1000 / fps : 1;
+        this.renderTimer = window.setTimeout(() => {
+          this.renderLoop(performance.now());
+        }, delay);
+      }
+    }
   }
 
   updatePadHum(state: PlayerState) {
@@ -959,6 +991,9 @@ const sfxVolumeSlider = document.getElementById("sfx-volume-slider") as HTMLInpu
 const shadowsToggle = document.getElementById("shadows-toggle") as HTMLInputElement;
 const brightnessSlider = document.getElementById("brightness-slider") as HTMLInputElement;
 const brightnessValue = document.getElementById("brightness-value") as HTMLSpanElement;
+const vsyncToggle = document.getElementById("vsync-toggle") as HTMLInputElement;
+const fpsCapSlider = document.getElementById("fps-cap-slider") as HTMLInputElement;
+const fpsCapValue = document.getElementById("fps-cap-value") as HTMLSpanElement;
 const roomNameInput = document.getElementById("room-name-input") as HTMLInputElement;
 const roomPasswordInput = document.getElementById("room-password-input") as HTMLInputElement;
 const roomMaxInput = document.getElementById("room-max-input") as HTMLSelectElement;
@@ -984,6 +1019,9 @@ sfxVolumeSlider.value = String(settings.sfxVolume);
 shadowsToggle.checked = settings.shadows;
 brightnessSlider.value = String(settings.brightness);
 brightnessValue.textContent = `${Math.round(settings.brightness * 100)}%`;
+vsyncToggle.checked = settings.vsync;
+fpsCapSlider.value = String(settings.fpsCap);
+fpsCapValue.textContent = settings.fpsCap > 0 ? String(settings.fpsCap) : "Unlimited";
 createRoomLevel.innerHTML = LEVELS.map(
   (level) => `<option value="${level.id}">${level.name}</option>`,
 ).join("");
@@ -1118,6 +1156,17 @@ shadowsToggle.addEventListener("change", () => {
 brightnessSlider.addEventListener("input", () => {
   settings.brightness = Number(brightnessSlider.value);
   applyGraphicsSettings();
+});
+
+vsyncToggle.addEventListener("change", () => {
+  settings.vsync = vsyncToggle.checked;
+  saveSettings(settings);
+});
+
+fpsCapSlider.addEventListener("input", () => {
+  settings.fpsCap = Number(fpsCapSlider.value);
+  fpsCapValue.textContent = settings.fpsCap > 0 ? String(settings.fpsCap) : "Unlimited";
+  saveSettings(settings);
 });
 
 interface JoinOptions {
