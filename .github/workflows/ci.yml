@@ -8,7 +8,9 @@ on:
   workflow_dispatch:
 
 env:
-  NIX_CONFIG: extra-experimental-features = nix-command flakes
+  NIX_CONFIG: |
+    extra-experimental-features = nix-command flakes
+    accept-flake-config = true
   IMAGE_NAME: ghcr.io/${{ github.repository }}
 
 jobs:
