@@ -130,6 +130,19 @@ jobs:
           NOMAD_TOKEN: ${{ secrets.NOMAD_TOKEN }}
         run: |
           [[ "$IMAGE" =~ ^ghcr\.io/sachahjkl/lanblaster\.sacha\.house@sha256:[0-9a-f]{64}$ ]]
-          nomad job run -var "image=$IMAGE" deploy/nomad/staging.nomad.hcl
+          nomad job run -detach -var "image=$IMAGE" deploy/nomad/staging.nomad.hcl
           test "$(nomad job inspect -json lanblaster-sacha-house | jq -r .Meta.image)" = "$IMAGE"
-          curl --fail --silent --show-error https://staging.lanblaster.sacha.house/health >/dev/null
+          version=$(nomad job inspect -json lanblaster-sacha-house | jq -r .Version)
+          for _ in $(seq 1 72); do
+            status=$(nomad job status -json lanblaster-sacha-house)
+            if jq -e --argjson version "$version" '.[0].LatestDeployment.JobVersion == $version and .[0].LatestDeployment.Status == "successful"' <<<"$status" >/dev/null; then
+              break
+            fi
+            if jq -e --argjson version "$version" '.[0].LatestDeployment.JobVersion == $version and (.[0].LatestDeployment.Status == "failed" or .[0].LatestDeployment.Status == "cancelled")' <<<"$status" >/dev/null; then
+              jq '.[0].LatestDeployment' <<<"$status"
+              exit 1
+            fi
+            sleep 5
+          done
+          jq -e --argjson version "$version" '.[0].LatestDeployment.JobVersion == $version and .[0].LatestDeployment.Status == "successful"' <<<"$status" >/dev/null
+          curl --fail --silent --show-error --max-time 15 https://staging.lanblaster.sacha.house/health >/dev/null
