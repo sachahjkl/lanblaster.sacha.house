@@ -2,7 +2,7 @@
   description = "Deno + Three.js multiplayer WebGPU game dev environment";
 
   nixConfig = {
-    extra-substituters = [ "https://nix-community.cachix.org" ];
+    extra-substituters = ["https://nix-community.cachix.org"];
     extra-trusted-public-keys = [
       "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
     ];
@@ -17,16 +17,14 @@
     };
   };
 
-  outputs =
-    {
-      self,
-      nixpkgs,
-      flake-utils,
-      git-hooks,
-    }:
+  outputs = {
+    self,
+    nixpkgs,
+    flake-utils,
+    git-hooks,
+  }:
     flake-utils.lib.eachDefaultSystem (
-      system:
-      let
+      system: let
         pkgs = import nixpkgs {
           inherit system;
           config.allowUnfreePredicate = package: nixpkgs.lib.getName package == "nomad";
@@ -35,12 +33,11 @@
 
         source = lib.cleanSourceWith {
           src = ./.;
-          filter =
-            path: _type:
-            let
-              rel = lib.removePrefix ((toString ./.) + "/") (toString path);
-            in
-            rel == ""
+          filter = path: _type: let
+            rel = lib.removePrefix ((toString ./.) + "/") (toString path);
+          in
+            rel
+            == ""
             || rel == "build.ts"
             || rel == "deno.json"
             || rel == "deno.lock"
@@ -65,7 +62,7 @@
           pname = "lanblaster-built";
           version = "2026.06.22";
           src = source;
-          nativeBuildInputs = [ pkgs.deno ];
+          nativeBuildInputs = [pkgs.deno];
           outputHashAlgo = "sha256";
           outputHashMode = "recursive";
           outputHash = "sha256-8fLFpBaE9exrhm0VSX31t7zxxuvOddlwubBW6s0t9Es=";
@@ -112,18 +109,18 @@
         dockerImage = pkgs.dockerTools.buildLayeredImage {
           name = "lanblaster.sacha.house";
           tag = "2026.06.22";
-          contents = [ lanblaster ];
+          contents = [lanblaster];
           fakeRootCommands = ''
             mkdir -p var/lib/lanblaster/deno-cache
             chmod 0777 var/lib/lanblaster/deno-cache
           '';
           config = {
-            Cmd = [ "${lanblaster}/bin/lanblaster-server" ];
+            Cmd = ["${lanblaster}/bin/lanblaster-server"];
             Env = [
               "HOST=0.0.0.0"
               "PORT=8000"
             ];
-            ExposedPorts."8000/tcp" = { };
+            ExposedPorts."8000/tcp" = {};
           };
         };
 
@@ -137,17 +134,17 @@
             check-merge-conflicts.enable = true;
             end-of-file-fixer = {
               enable = true;
-              excludes = [ "^public/assets/" ];
+              excludes = ["^public/assets/"];
             };
-            nixfmt.enable = true;
+            alejandra.enable = true;
             trim-trailing-whitespace = {
               enable = true;
-              excludes = [ "^public/assets/" ];
+              excludes = ["^public/assets/"];
             };
           };
         };
 
-        nomadJobs = pkgs.runCommand "lanblaster-nomad-jobs" { nativeBuildInputs = [ pkgs.nomad ]; } ''
+        nomadJobs = pkgs.runCommand "lanblaster-nomad-jobs" {nativeBuildInputs = [pkgs.nomad];} ''
           image="ghcr.io/sachahjkl/lanblaster.sacha.house@sha256:0000000000000000000000000000000000000000000000000000000000000000"
           nomad job validate -var "image=$image" ${./deploy/nomad/staging.nomad.hcl}
           nomad job validate -var "image=$image" ${./deploy/nomad/production.nomad.hcl}
@@ -207,8 +204,7 @@
             deno task live
           '';
         };
-      in
-      {
+      in {
         packages = {
           inherit dockerImage lanblaster;
           build = runBuild;
@@ -226,15 +222,15 @@
         };
 
         apps = {
-          build = flake-utils.lib.mkApp { drv = runBuild; };
+          build = flake-utils.lib.mkApp {drv = runBuild;};
           server = flake-utils.lib.mkApp {
             drv = lanblaster;
             exePath = "/bin/lanblaster-server";
           };
-          proxy = flake-utils.lib.mkApp { drv = runProxy; };
-          lan = flake-utils.lib.mkApp { drv = runLan; };
-          live = flake-utils.lib.mkApp { drv = runLive; };
-          default = flake-utils.lib.mkApp { drv = runLan; };
+          proxy = flake-utils.lib.mkApp {drv = runProxy;};
+          lan = flake-utils.lib.mkApp {drv = runLan;};
+          live = flake-utils.lib.mkApp {drv = runLive;};
+          default = flake-utils.lib.mkApp {drv = runLan;};
         };
 
         devShells.default = pkgs.mkShell {
@@ -259,7 +255,7 @@
           '';
         };
 
-        formatter = pkgs.nixfmt;
+        formatter = pkgs.alejandra;
       }
     );
 }
