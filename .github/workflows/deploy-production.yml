@@ -3,12 +3,21 @@ name: Deploy production
 on:
   workflow_dispatch:
 
+env:
+  NIX_CONFIG: |
+    extra-experimental-features = nix-command flakes
+    accept-flake-config = true
+    max-jobs = 2
+  NOMAD_ADDR: http://homelab.panthera-python.ts.net:4646
+  NOMAD_AUTH_AUDIENCE: nomad.sacha.house
+  TS_AUDIENCE: api.tailscale.com/TWg2iR2X7G11CNTRL-k23Swjrqst11CNTRL
+  TS_OAUTH_CLIENT_ID: TWg2iR2X7G11CNTRL-k23Swjrqst11CNTRL
+
 jobs:
   promote:
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: https://lanblaster.sacha.house
+    environment: production
     permissions:
       attestations: read
       contents: read
@@ -21,10 +30,26 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
+            extra-substituters = https://nix-community.cachix.org
+            extra-trusted-public-keys = nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
+            max-jobs = 2
+      - id: config
+        run: nix run ./deploy/config -- github-output >>"$GITHUB_OUTPUT"
+      - name: Join the deployment network
+        uses: tailscale/github-action@306e68a486fd2350f2bfc3b19fcd143891a4a2d8 # v4.1.3
+        with:
+          oauth-client-id: ${{ env.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ env.TS_AUDIENCE }}
+          tags: tag:github-actions-deploy
+          ping: homelab.panthera-python.ts.net
       - name: Install Nomad
         env:
-          NOMAD_VERSION: 1.11.3
           NOMAD_SHA256: 19dac5642a2ba5305e6ff8efee06a708d760ebe4d1cd7936bc3dc526f477dc12
+          NOMAD_VERSION: 1.11.3
         run: |
           archive="$RUNNER_TEMP/nomad.zip"
           curl --fail --location --silent --show-error \
@@ -35,45 +60,74 @@ jobs:
           printf '%s\n' "$RUNNER_TEMP/nomad-bin" >>"$GITHUB_PATH"
       - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-      - name: Join the deployment network
-        uses: tailscale/github-action@306e68a486fd2350f2bfc3b19fcd143891a4a2d8 # v4.1.3
-        with:
-          oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}
-          audience: ${{ vars.TS_AUDIENCE }}
-          tags: tag:github-actions-deploy
-          ping: homelab.panthera-python.ts.net
-      - name: Promote the exact staging image
+      - name: Authenticate to Nomad
+        run: |
+          set -euo pipefail
+          oidc=$(curl --fail --silent --show-error \
+            --header "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$NOMAD_AUTH_AUDIENCE" | jq -r .value)
+          token=$(nomad login -method github-actions -login-token "$oidc" -json | jq -r .SecretID)
+          test -n "$token" && test "$token" != null
+          printf '::add-mask::%s\n' "$token"
+          printf 'NOMAD_TOKEN=%s\n' "$token" >>"$GITHUB_ENV"
+      - name: Verify and promote the staging image
         timeout-minutes: 15
         env:
+          DOMAIN: ${{ steps.config.outputs.production_domain }}
           GH_TOKEN: ${{ github.token }}
-          NOMAD_ADDR: http://homelab.panthera-python.ts.net:4646
-          NOMAD_TOKEN: ${{ secrets.NOMAD_TOKEN }}
+          HEALTH_PATH: ${{ steps.config.outputs.health_path }}
+          JOB_NAME: ${{ steps.config.outputs.name }}
+          NOMAD_NAMESPACE: production
+          VOLUME_ENABLED: ${{ steps.config.outputs.volume_enabled }}
         run: |
-          image=$(timeout 30s nomad job inspect -namespace staging -json lanblaster-sacha-house | jq -r .Meta.image)
-          [[ "$image" =~ ^ghcr\.io/sachahjkl/lanblaster\.sacha\.house@sha256:[0-9a-f]{64}$ ]]
+          image=$(timeout 30s nomad job inspect -namespace staging -json "$JOB_NAME" | jq -r .Meta.image)
+          [[ "$image" =~ ^ghcr\.io/[a-z0-9_.-]+/[a-z0-9_.-]+@sha256:[0-9a-f]{64}$ ]]
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/ci.yml@refs/heads/master"
           timeout 2m cosign verify \
-            --certificate-identity-regexp '^https://github.com/sachahjkl/lanblaster\.sacha\.house/\.github/workflows/ci\.yml@refs/heads/master$' \
+            --certificate-identity "$identity" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            "$image" >/dev/null
+            "$image" >/dev/null 2>&1
           timeout 2m cosign verify-attestation \
-            --certificate-identity-regexp '^https://github.com/sachahjkl/lanblaster\.sacha\.house/\.github/workflows/ci\.yml@refs/heads/master$' \
+            --certificate-identity "$identity" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            --type spdxjson \
-            "$image" >/dev/null
-          timeout 2m gh attestation verify "oci://$image" --repo "$GITHUB_REPOSITORY" >/dev/null
-          timeout 30s nomad job run -detach -namespace production -var "image=$image" deploy/nomad/production.nomad.hcl
-          test "$(nomad job inspect -namespace production -json lanblaster-sacha-house | jq -r .Meta.image)" = "$image"
-          version=$(nomad job inspect -namespace production -json lanblaster-sacha-house | jq -r .Version)
-          for _ in $(seq 1 72); do
-            status=$(nomad job status -namespace production -json lanblaster-sacha-house)
-            if jq -e --argjson version "$version" '.[0].LatestDeployment.JobVersion == $version and .[0].LatestDeployment.Status == "successful"' <<<"$status" >/dev/null; then
+            --type spdxjson "$image" >/dev/null 2>&1
+          timeout 2m gh attestation verify "oci://$image" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1
+          if [ "$VOLUME_ENABLED" = true ]; then
+            volume_name="$JOB_NAME-production-data"
+            if ! nomad volume status -type host -json \
+              | jq -e --arg name "$volume_name" 'any(.Name == $name)' >/dev/null; then
+              volume="$RUNNER_TEMP/production.volume.hcl"
+              nix run ./deploy/config -- volume-spec production >"$volume"
+              timeout 30s nomad volume create "$volume"
+            fi
+          fi
+          vars="$RUNNER_TEMP/production.vars.hcl"
+          nix run ./deploy/config -- nomad-vars production "$image" >"$vars"
+          pack="$RUNNER_TEMP/production-pack"
+          nix run nixpkgs#nomad-pack -- render deploy/nomad \
+            --var-file "$vars" --to-dir "$pack" --auto-approve >/dev/null
+          timeout 30s nomad job run -detach -namespace production \
+            "$pack/homelab-application/application.nomad"
+          version=$(nomad job inspect -json "$JOB_NAME" | jq -r .Version)
+          healthy=false
+          for _attempt in $(seq 1 90); do
+            if nomad job status -json "$JOB_NAME" | jq -e --argjson version "$version" \
+              '.[0].Allocations | any(.JobVersion == $version and .ClientStatus == "running" and .DeploymentStatus.Healthy == true)' \
+              >/dev/null; then
+              healthy=true
               break
             fi
-            if jq -e --argjson version "$version" '.[0].LatestDeployment.JobVersion == $version and (.[0].LatestDeployment.Status == "failed" or .[0].LatestDeployment.Status == "cancelled")' <<<"$status" >/dev/null; then
-              jq '.[0].LatestDeployment' <<<"$status"
-              exit 1
-            fi
-            sleep 5
+            sleep 2
           done
-          jq -e --argjson version "$version" '.[0].LatestDeployment.JobVersion == $version and .[0].LatestDeployment.Status == "successful"' <<<"$status" >/dev/null
-          curl --fail --silent --show-error --max-time 15 https://lanblaster.sacha.house/health >/dev/null
+          test "$healthy" = true
+          test "$(nomad job inspect -json "$JOB_NAME" | jq -r .Meta.image)" = "$image"
+          route_ready=false
+          for _attempt in $(seq 1 90); do
+            if status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+              "https://$DOMAIN$HEALTH_PATH") && [ "$status" = 200 ]; then
+              route_ready=true
+              break
+            fi
+            sleep 2
+          done
+          test "$route_ready" = true

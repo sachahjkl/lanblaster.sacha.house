@@ -1,0 +1,8 @@
+application:
+  name: lanblaster-sacha-house
+  port: 8000
+  healthPath: /health
+
+domain:
+  production: lanblaster.sacha.house
+  staging: staging.lanblaster.sacha.house

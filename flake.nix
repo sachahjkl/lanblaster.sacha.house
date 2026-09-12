@@ -144,10 +144,26 @@
           };
         };
 
-        nomadJobs = pkgs.runCommand "lanblaster-nomad-jobs" {nativeBuildInputs = [pkgs.nomad];} ''
+        nomadJobs = pkgs.runCommand "lanblaster-sacha-house-nomad-jobs" {nativeBuildInputs = [pkgs.nomad pkgs.nomad-pack];} ''
+          export HOME="$TMPDIR"
           image="ghcr.io/sachahjkl/lanblaster.sacha.house@sha256:0000000000000000000000000000000000000000000000000000000000000000"
-          nomad job validate -var "image=$image" ${./deploy/nomad/staging.nomad.hcl}
-          nomad job validate -var "image=$image" ${./deploy/nomad/production.nomad.hcl}
+          for environment in staging production; do
+            cat > "$TMPDIR/$environment.vars.hcl" <<EOFVARS
+          name = "lanblaster-sacha-house"
+          domain = "example.sacha.house"
+          environment = "$environment"
+          health_path = "/"
+          image = "$image"
+          port = 8000
+          service_tags = []
+          volume_enabled = false
+          volume_mount_path = ""
+          volume_name = ""
+          EOFVARS
+            nomad-pack render ${./deploy/nomad} --var-file "$TMPDIR/$environment.vars.hcl" \
+              --to-dir "$TMPDIR/$environment" --auto-approve >/dev/null
+            nomad job validate "$TMPDIR/$environment/homelab-application/application.nomad"
+          done
           touch "$out"
         '';
 
