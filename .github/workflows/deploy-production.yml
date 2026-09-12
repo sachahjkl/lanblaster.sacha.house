@@ -10,4 +10,7 @@ jobs:
       contents: read
       id-token: write
       packages: read
-    uses: sachahjkl/deployment-actions/.github/workflows/application-production.yml@v3.0.1
+    uses: sachahjkl/deployment-actions/.github/workflows/application-promotion.yml@v4.0.0
+    with:
+      source-environment: staging
+      target-environment: production
