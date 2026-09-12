@@ -68,6 +68,11 @@ job "lanblaster-sacha-house" {
         name     = "lanblaster-sacha-house-production"
         provider = "nomad"
         port     = "http"
+        tags = [
+          "traefik.enable=true",
+          "traefik.http.routers.lanblaster-sacha-house-production.entrypoints=nomad",
+          "traefik.http.routers.lanblaster-sacha-house-production.rule=Host(`lanblaster.sacha.house`)",
+        ]
 
         check {
           name     = "HTTP health"
