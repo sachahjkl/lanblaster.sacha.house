@@ -3,6 +3,13 @@ application:
   port: 8000
   healthPath: /health
 
-domain:
-  production: lanblaster.sacha.house
-  staging: staging.lanblaster.sacha.house
+environments:
+  staging:
+    domain: staging.lanblaster.sacha.house
+    noIndex: true
+  production:
+    domain: lanblaster.sacha.house
+
+resources:
+  cpu: 200
+  memory: 128
