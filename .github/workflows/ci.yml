@@ -139,6 +139,7 @@ jobs:
           tags: tag:github-actions-deploy
           ping: homelab.panthera-python.ts.net
       - name: Deploy exact image to staging
+        timeout-minutes: 8
         env:
           IMAGE: ${{ needs.publish.outputs.image }}
           NOMAD_ADDR: http://homelab.panthera-python.ts.net:4646
@@ -146,7 +147,7 @@ jobs:
           NOMAD_TOKEN: ${{ secrets.NOMAD_TOKEN }}
         run: |
           [[ "$IMAGE" =~ ^ghcr\.io/sachahjkl/lanblaster\.sacha\.house@sha256:[0-9a-f]{64}$ ]]
-          nomad job run -detach -var "image=$IMAGE" deploy/nomad/staging.nomad.hcl
+          timeout 30s nomad job run -detach -var "image=$IMAGE" deploy/nomad/staging.nomad.hcl
           test "$(nomad job inspect -json lanblaster-sacha-house | jq -r .Meta.image)" = "$IMAGE"
           version=$(nomad job inspect -json lanblaster-sacha-house | jq -r .Version)
           for _ in $(seq 1 72); do

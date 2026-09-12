@@ -43,24 +43,25 @@ jobs:
           tags: tag:github-actions-deploy
           ping: homelab.panthera-python.ts.net
       - name: Promote the exact staging image
+        timeout-minutes: 15
         env:
           GH_TOKEN: ${{ github.token }}
           NOMAD_ADDR: http://homelab.panthera-python.ts.net:4646
           NOMAD_TOKEN: ${{ secrets.NOMAD_TOKEN }}
         run: |
-          image=$(nomad job inspect -namespace staging -json lanblaster-sacha-house | jq -r .Meta.image)
+          image=$(timeout 30s nomad job inspect -namespace staging -json lanblaster-sacha-house | jq -r .Meta.image)
           [[ "$image" =~ ^ghcr\.io/sachahjkl/lanblaster\.sacha\.house@sha256:[0-9a-f]{64}$ ]]
-          cosign verify \
+          timeout 2m cosign verify \
             --certificate-identity-regexp '^https://github.com/sachahjkl/lanblaster\.sacha\.house/\.github/workflows/ci\.yml@refs/heads/master$' \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            "$image"
-          cosign verify-attestation \
+            "$image" >/dev/null
+          timeout 2m cosign verify-attestation \
             --certificate-identity-regexp '^https://github.com/sachahjkl/lanblaster\.sacha\.house/\.github/workflows/ci\.yml@refs/heads/master$' \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             --type spdxjson \
-            "$image"
-          gh attestation verify "oci://$image" --repo "$GITHUB_REPOSITORY"
-          nomad job run -detach -namespace production -var "image=$image" deploy/nomad/production.nomad.hcl
+            "$image" >/dev/null
+          timeout 2m gh attestation verify "oci://$image" --repo "$GITHUB_REPOSITORY" >/dev/null
+          timeout 30s nomad job run -detach -namespace production -var "image=$image" deploy/nomad/production.nomad.hcl
           test "$(nomad job inspect -namespace production -json lanblaster-sacha-house | jq -r .Meta.image)" = "$image"
           version=$(nomad job inspect -namespace production -json lanblaster-sacha-house | jq -r .Version)
           for _ in $(seq 1 72); do
