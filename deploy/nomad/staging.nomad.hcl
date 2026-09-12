@@ -68,7 +68,7 @@ job "lanblaster-sacha-house" {
         port     = "http"
         tags = [
           "traefik.enable=true",
-          "traefik.http.routers.lanblaster-sacha-house-staging.entrypoints=nomad",
+          "traefik.http.routers.lanblaster-sacha-house-staging.entrypoints=websecure",
           "traefik.http.routers.lanblaster-sacha-house-staging.middlewares=lanblaster-sacha-house-staging-noindex",
           "traefik.http.routers.lanblaster-sacha-house-staging.rule=Host(`staging.lanblaster.sacha.house`)",
           "traefik.http.routers.lanblaster-sacha-house-staging.tls.domains[0].main=staging.lanblaster.sacha.house",
