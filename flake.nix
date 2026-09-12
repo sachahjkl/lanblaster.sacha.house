@@ -27,7 +27,6 @@
       system: let
         pkgs = import nixpkgs {
           inherit system;
-          config.allowUnfreePredicate = package: nixpkgs.lib.getName package == "nomad";
         };
         lib = pkgs.lib;
 
