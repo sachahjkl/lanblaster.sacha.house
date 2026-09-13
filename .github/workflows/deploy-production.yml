@@ -12,5 +12,6 @@ jobs:
       packages: read
     uses: sachahjkl/deployment-actions/.github/workflows/application-promotion.yml@v6.0.3
     with:
+      publishing-workflow-version: v6.0.3
       source-environment: staging
       target-environment: production
